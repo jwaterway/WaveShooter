@@ -1,0 +1,21 @@
+# Ignore SoundFonts / large audio files
+*.sf2
+*.wav
+*.mp3
+
+# Build files
+*.class
+bin/
+build/
+out/
+
+# IDE files
+*.iml
+.idea/
+.project
+.classpath
+.settings/
+FluidR3_GM.sf2
+*.sf2
+*.wav
+*.mp3
