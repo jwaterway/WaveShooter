@@ -25,6 +25,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
 	public static final int HEIGHT = 800;
 	private long lastGunSwitch = 0;
     private final long gunSwitchDelay = 50; // ms between switches
+    public ArrayList<BlackHole> blackHoles = new ArrayList<>();
+    public static ArrayList<ParticleRing> rings = new ArrayList<>();
 
 
     // Game loop
@@ -37,29 +39,32 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
 
     // Input
     boolean upPressed, downPressed, leftPressed, rightPressed, nPressed, bPressed, cPressed, spacePressed, plusPressed, minusPressed;
-    
-   
-    
-
-
+  
     public GamePanel() {
     	this.setPreferredSize(new Dimension(WIDTH, HEIGHT));
         this.setBackground(Color.BLACK);
         this.setDoubleBuffered(true);
         this.addKeyListener(this);
         this.setFocusable(true);
+        setOpaque(true);
+        setBackground(Color.BLACK);
+        setDoubleBuffered(true);
         
-    
-     // generate stars
-       
-        
+        new javax.swing.Timer(16, e -> {   // ~60 FPS
+            update();
+            repaint();
+        }).start();
+     // Example: make one in the middle of the screen
+        blackHoles.add(new BlackHole(WIDTH-250, HEIGHT-250, 30));
+        // generate stars
+  
         player = new Player(WIDTH / 2, HEIGHT / 2, 40);
-        for (int i = 0; i < 100; i++) {  // number of stars
+        for (int i = 0; i < 50; i++) {  // number of stars
             stars.add(new Star(WIDTH, HEIGHT, Math.random()+.2)); 
-            
             }
-      
-
+        for (BlackHole bh : blackHoles) {
+            bh.update(WIDTH, HEIGHT);
+        }
         
 
         // Mouse follows movement
@@ -123,12 +128,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
     	}
     	for (Star s : stars) {
     	    s.update(WIDTH, HEIGHT, vx, vy, player.getAngle());
+    	    s.updateWithBlackHoles(blackHoles);
     	}
-
-
-
-    	if (nPressed) player.angle += 3; // speed to taste
-    	if (bPressed) player.angle -= 3;
+    	if (nPressed) player.angle += 1; // speed to taste
+    	if (bPressed) player.angle -= 1;
     	player.updateMovement(upPressed, downPressed, leftPressed, rightPressed);
         player.update(); // for spin
         for (int i = 0; i < projectiles.size(); i++) {
@@ -139,8 +142,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
             }
         }
 
-
-        
     	// update "roll angle" if moving
     	if (vx != 0 || vy != 0) {
     	    player.rollAngle = Math.atan2(vy, vx);
@@ -159,7 +160,6 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
             player.offsetAmt = Math.max(0.1, player.offsetAmt - 0.01);
         }
                
-
         // inside update()
         if (cPressed) {
             long now = System.currentTimeMillis();
@@ -171,14 +171,81 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
             }
         }
 
-
-
         // move projectiles
         for (int i = 0; i < projectiles.size(); i++) {
             projectiles.get(i).update();
             // (optional) remove if off screen:
             if (projectiles.get(i).isOffscreen(WIDTH, HEIGHT)) { projectiles.remove(i--); }
         }
+     // in update()
+     // update black holes (this decays flashAlpha/flashTimer!)
+        for (BlackHole bh : blackHoles) {
+            bh.update(WIDTH, HEIGHT);
+        }
+     // --- PROJECTILE ↔ BLACK HOLE COLLISIONS ---
+        for (int i = projectiles.size() - 1; i >= 0; i--) {
+            Projectile p = projectiles.get(i);
+            if (!p.isAlive()) { projectiles.remove(i); continue; }
+
+            for (BlackHole bh : blackHoles) {
+                double hitDx = p.getX() - bh.getX();
+                double hitDy = p.getY() - bh.getY();
+                double dist2 = hitDx*hitDx + hitDy*hitDy;
+
+                double hitR = bh.getRadius() + p.getRadius();
+                if (dist2 <= hitR * hitR) {
+                    // Hit! Apply effect based on the current gun
+                    Player.GunType gun = player.getGun();
+                    if (gun == null) gun = player.getGun(); // fallback, just in case
+                    switch (gun) {
+                        case TRIANGLE: { // heavy damage + knockback + big rim ring
+                            bh.applyDamage(1.2);                         // tune
+                            bh.applyKnockback(dx, dy, 0.9);              // push away from impact
+                            bh.flash();
+                            rings.add(new ParticleRing(bh.getX(), bh.getY(), (int)Math.round(bh.getRadius())));
+                            p.kill();                                     // triangle rounds stop on hit
+                            break;
+                        }
+                        case SQUARE: {   // split on hit (shrapnel) + light damage
+                            bh.applyDamage(0.45);
+                            bh.flash();
+                            rings.add(new ParticleRing(bh.getX(), bh.getY(), (int)Math.round(bh.getRadius())));
+                            // spawn 4 children at 45° steps (smaller, faster)
+                            for (int k = 0; k < 4; k++) {
+                                double ang = Math.atan2(p.getDy(), p.getDx()) + Math.toRadians(45 * k);
+                                double spd = Math.hypot(p.getDx(), p.getDy()) * 1.15;
+                                projectiles.add(Projectile.childShard(
+                                    p.getX(), p.getY(), Math.cos(ang)*spd, Math.sin(ang)*spd, p.getRadius()*0.6
+                                ));
+                            }
+                            p.kill();
+                            break;
+                        }
+                        case SINE: {     // pierce + slow debuff + tiny damage
+                            bh.applyDamage(0.2);
+                            bh.applySlow(28, 0.55);                       // ~28 frames at 55% speed
+                            bh.flash();
+                            // SINE bullets **pierce**: allow a limited pierce count
+                            p.incrementPierce();
+                            if (p.getPierceCount() >= 3) p.kill();
+                            break;
+                        }
+                    }
+                    // we handled one BH; no double-count this frame
+                    break;
+                }
+            }
+        }
+
+        // update rings and cull dead ones
+        for (int i = rings.size() - 1; i >= 0; i--) {
+            ParticleRing r = rings.get(i);
+            r.update();
+            if (!r.isAlive()) rings.remove(i);
+        }
+        
+
+       
     }
     public void playGunSound(int screenWidth) {
         // Map offsetAmt to MIDI velocity (volume)
@@ -239,7 +306,46 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
             lastFireNs = nowNs;
         }
     }
-   
+    public static Point safeRandomPoint(int width, int height, java.util.List<BlackHole> holes) {
+        final int margin = 20;
+        final int maxTries = 60;
+        final double EXCLUDE_FACTOR = 1.4;   // exclude inside 1.4 * radius
+        final double BUFFER = 12.0;          // small pad outside the rim
+
+        for (int i = 0; i < maxTries; i++) {
+            double x = (Math.random() * (width  + margin * 2)) - margin;
+            double y = (Math.random() * (height + margin * 2)) - margin;
+
+            boolean ok = true;
+            for (BlackHole bh : holes) {
+                double dx = x - bh.getX();
+                double dy = y - bh.getY();
+                double d  = Math.hypot(dx, dy);
+                double minD = bh.getRadius() * EXCLUDE_FACTOR + BUFFER;
+                if (d < minD) { ok = false; break; }
+            }
+            if (ok) return new Point((int)Math.round(x), (int)Math.round(y));
+        }
+
+        // Fallback: spawn along an edge farthest from the largest BH
+        if (!holes.isEmpty()) {
+            BlackHole biggest = holes.get(0);
+            for (BlackHole bh : holes) if (bh.getRadius() > biggest.getRadius()) biggest = bh;
+
+            double bestX = 0, bestY = 0, bestD = -1;
+            int[][] edges = { {0, height/2}, {width, height/2}, {width/2, 0}, {width/2, height} };
+            for (int[] e : edges) {
+                double d = Math.hypot(e[0] - biggest.getX(), e[1] - biggest.getY());
+                if (d > bestD) { bestD = d; bestX = e[0]; bestY = e[1]; }
+            }
+            return new Point((int)bestX, (int)bestY);
+        }
+
+        // No holes? Just random.
+        int x = (int)(Math.random() * width);
+        int y = (int)(Math.random() * height);
+        return new Point(x, y);
+    }
     
     @Override
 
@@ -247,16 +353,19 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
         super.paintComponent(g);
         Graphics2D g2 = (Graphics2D) g;
 
-        // 🌌 draw background stars first
-        for (Star s : stars) {
-            s.draw(g2);
-        }
-
-        // then player and projectiles
+        for (Star s : stars) s.draw(g2, blackHoles);        // background
+        // snapshots prevent CME during iteration
+        final ArrayList<Star> starsSnap        = new ArrayList<>(stars);
+        final ArrayList<Projectile> projsSnap  = new ArrayList<>(projectiles);
+        final ArrayList<BlackHole> holesSnap   = new ArrayList<>(blackHoles);
+        final ArrayList<ParticleRing> ringsSnap= new ArrayList<>(rings);
+       
+        										
         player.draw(g2);
         for (Projectile p : projectiles) {
             p.draw(g2);
         }
+        for (BlackHole bh : blackHoles) bh.draw(g2);  // covers stars and projectiles behind
         g2.setColor(Color.WHITE);
         g2.drawString("Offset: " + String.format("%.2f", offsetAmt), 20, 20);
         
@@ -265,7 +374,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
         g2.drawString("FPS: " + FPS, 20, 40);
         g2.drawString("Gun Angle: " + player.angle + "°", 20, 60);
         g2.drawString("Projectiles: " + projectiles.size(), 20, 80);
-
+        
+     // in paintComponent(), after drawing stars and BH
+        for (ParticleRing ring : rings) {
+            ring.draw(g2);
+        }
 
 
         g2.dispose();
@@ -284,14 +397,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
             case KeyEvent.VK_N:      nPressed     = true; break;
             case KeyEvent.VK_B:      bPressed     = true; break;
             case KeyEvent.VK_C:      cPressed     = true; break;
-
             case KeyEvent.VK_SPACE:  spacePressed = true; break;
-
             case KeyEvent.VK_EQUALS: plusPressed  = true; break;   // main keyboard '+'
             case KeyEvent.VK_ADD:    plusPressed  = true; break;   // numpad '+'
             case KeyEvent.VK_MINUS:  minusPressed = true; break;   // main keyboard '-'
             case KeyEvent.VK_SUBTRACT: minusPressed = true; break; // numpad '-'
-
             case KeyEvent.VK_1: player.setGun(Player.GunType.TRIANGLE); break;
             case KeyEvent.VK_2: player.setGun(Player.GunType.SQUARE);   break;
             case KeyEvent.VK_3: player.setGun(Player.GunType.SINE);     break;
@@ -309,11 +419,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener {
             case KeyEvent.VK_N:      nPressed     = false; break;
             case KeyEvent.VK_B:      bPressed     = false; break;
             case KeyEvent.VK_C:      cPressed     = false; break;
-
-
             case KeyEvent.VK_EQUALS:
             case KeyEvent.VK_ADD:    plusPressed  = false; break;
-
             case KeyEvent.VK_MINUS:
             case KeyEvent.VK_SUBTRACT: minusPressed = false; break;
         }

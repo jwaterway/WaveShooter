@@ -5,21 +5,36 @@ import java.awt.*;
 public class Projectile {
     int x, y;           // current position
     int size = 10;      // size of projectile
-    double dx, dy;      // velocity
+    double dx, dy, radius = 6;      // velocity
     Color color;        // color based on gun
     String type;        // "TRIANGLE", "SQUARE", "SINE"
     double angle;  		// <--- store firing angle
     double offsetAmt;   // angle offset for waves
     int w = GamePanel.WIDTH;
     int h = GamePanel.HEIGHT;
+    private boolean alive = true;
+    private int pierceCount = 0;
+         // set your default if you have one
+    private Player.GunType gunType;     // remember which gun fired this
 
+    public double getX() { return x; }
+    public double getY() { return y; }
+    public double getDx() { return dx; }
+    public double getDy() { return dy; }
+    public double getRadius() { return radius; }
+    public boolean isAlive() { return alive; }
+    public void kill() { alive = false; }
+
+    public void incrementPierce() { pierceCount++; }
+    public int getPierceCount() { return pierceCount; }
+    public Player.GunType getGunType() { return gunType; }
 
     public Projectile(int x, int y, double angle, Player.GunType gun, double offsetAmt) {
         this.x = x;
         this.y = y;
         this.angle = angle;   // <--- save it
         this.offsetAmt = offsetAmt;   // store it
-
+        this.gunType = gun;  
         double speed = 6.0;
         dx = speed * Math.cos(angle);
         dy = speed * Math.sin(angle);
@@ -43,6 +58,7 @@ public class Projectile {
                 type = "CIRCLE";
         }
     }
+    
     public void update() {
         x += dx;
         y += dy;
@@ -50,6 +66,29 @@ public class Projectile {
     
     public boolean isOffscreen(int width, int height) {
         return x < -50 || x > width + 50 || y < -50 || y > height + 50;
+    }
+    
+ // Overloaded constructor used for shards / programmatic spawns
+    public Projectile(double x, double y, double vx, double vy, double radius, Player.GunType gun) {
+        this.x = (int)x;
+        this.y = (int)y;
+        this.dx = vx;
+        this.dy = vy;
+        this.radius = radius;
+        this.gunType = gun;
+
+        switch (gun) {
+            case TRIANGLE: color = new Color(255, 80, 40);  type = "TRIANGLE"; break;
+            case SQUARE:   color = new Color(40, 160, 255); type = "SQUARE";   break;
+            case SINE:     color = new Color(80, 255, 120); type = "SINE";     break;
+            default:       color = Color.WHITE;             type = "CIRCLE";
+        }
+    }
+
+    
+ // Factory for SQUARE shrapnel
+    public static Projectile childShard(double startX, double startY, double vx, double vy, double radius) {
+        return new Projectile(startX, startY, vx, vy, radius, Player.GunType.SQUARE);
     }
 
     

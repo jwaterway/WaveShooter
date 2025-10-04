@@ -16,13 +16,11 @@ public class Player {
     public double offsetAmt = 1.0; // default offset, range 0.1 – 2.0
     double vx = 0, vy = 0;   // velocity
     double ax = 0, ay = 0;   // acceleration
-    double maxSpeed = 5;     // cap speed
-    double accel = 0.7;      // acceleration amount
+    double maxSpeed = 10;     // cap speed
+    double accel = .8;      // acceleration amount
     double friction = 0.9;  // slows down when no keys pressed
 
 
-
-    
     enum GunType { TRIANGLE, SQUARE, SINE }
     GunType currentGun = GunType.TRIANGLE; // default
 
@@ -77,19 +75,19 @@ public class Player {
      // bounce off walls x2
         if (x - radius < 0) {         // left wall
             x = radius;
-            vx = -vx * 2;
+            vx = -vx * 20;
         }
         if (x + radius > GamePanel.WIDTH) {   // right wall
             x = GamePanel.WIDTH - radius;
-            vx = -vx * 2;
+            vx = -vx * 20;
         }
         if (y - radius < 0) {         // top wall
             y = radius;
-            vy = -vy * 2;
+            vy = -vy * 20;
         }
         if (y + radius > GamePanel.HEIGHT) {  // bottom wall
             y = GamePanel.HEIGHT - radius;
-            vy = -vy * 2;
+            vy = -vy * 20;
         }
 
     }
