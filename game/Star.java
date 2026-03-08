@@ -54,7 +54,7 @@ public class Star {
         this.orbiting = false;
         this.orbitTarget = null;
     }
-    public void update(int width, int height, double playerVX, double playerVY, int coneDeg) {
+    public void update(int width, int height, double playerVX, double playerVY, double coneDeg) {
         // Parallax: opposite player velocity + "draft" toward aim
         x -= Math.round(playerVX * speed * 0.25);
         y -= Math.round(playerVY * speed * 0.25);

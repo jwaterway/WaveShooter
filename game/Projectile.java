@@ -3,7 +3,7 @@ package game;
 import java.awt.*;
 
 public class Projectile {
-    int x, y;           // current position
+    double x, y;           // current position
     int size = 10;      // size of projectile
     double dx, dy, radius = 6;      // velocity
     Color color;        // color based on gun
@@ -29,7 +29,7 @@ public class Projectile {
     public int getPierceCount() { return pierceCount; }
     public Player.GunType getGunType() { return gunType; }
 
-    public Projectile(int x, int y, double angle, Player.GunType gun, double offsetAmt) {
+    public Projectile(double x, double y, double angle, Player.GunType gun, double offsetAmt) {
         this.x = x;
         this.y = y;
         this.angle = angle;   // <--- save it
@@ -94,54 +94,57 @@ public class Projectile {
     
     public void draw(Graphics2D g2) {
         g2.setColor(color);
-
+        double prevX = 0, prevY = 0;
         switch (type) {
         case "TRIANGLE":
-            for (int i = 0; i < 15; i++) {
-                int px = (int)(x - i * 2 * Math.cos(angle));
-                int py = (int)(y - i * 2 * Math.sin(angle));
+        	
+            for (int i = 0; i < 25; i++) {
+            	double px = x - i * 2 * Math.cos(angle);
+            	double py = y - i * 2 * Math.sin(angle);
+            	prevX = px;
+                prevY = py;
 
                 // Triangle wave using sawtooth formula
                 double phase = ((x + y + i) * 0.2) % (2 * Math.PI);
                 double triVal = 2 * Math.abs((phase / Math.PI) - 1) - 1; // range -1..1
 
-                int offset = (int)(triVal * offsetAmt * 8);
+                double offset = triVal * offsetAmt * 8;
+                double ox = offset * Math.cos(angle + Math.PI / 2);
+                double oy = offset * Math.sin(angle + Math.PI / 2);
 
-                int ox = (int)(offset * Math.cos(angle + Math.PI / 2));
-                int oy = (int)(offset * Math.sin(angle + Math.PI / 2));
-
-                g2.fillRect(px + ox, py + oy, 3, 3);
+                g2.drawLine((int)prevX, (int)prevY, (int)(px + ox), (int)(py + oy));
+                prevX = px;
+                prevY = py;
             }
             break;
 
         
         case "SQUARE":
-            int prevX = 0, prevY = 0;
             boolean hasPrev = false;
 
             for (int i = 0; i < 15; i++) {
                 // Travel along projectile direction
-                int px = (int)(x - i * 2 * Math.cos(angle));
-                int py = (int)(y - i * 2 * Math.sin(angle));
+                double px = (int)(x - i * 2 * Math.cos(angle));
+                double py = (int)(y - i * 2 * Math.sin(angle));
 
                 // Square wave value: +1 or -1
                 double phase = (x + y + i) * 0.2;
-                int squareVal = (Math.sin(phase) >= 0) ? 1 : -1;
-                int offset = (int)(squareVal * (offsetAmt * .5 * 10));
+                double squareVal = (Math.sin(phase) >= 0) ? 1 : -1;
+                double offset = (squareVal * (offsetAmt * .5 * 10));
 
                 // Apply perpendicular offset
-                int ox = (int)(offset * Math.cos(angle + Math.PI / 2));
-                int oy = (int)(offset * Math.sin(angle + Math.PI / 2));
+                double ox = (int)(offset * Math.cos(angle + Math.PI / 2));
+                double oy = (int)(offset * Math.sin(angle + Math.PI / 2));
 
-                int drawX = px + ox;
-                int drawY = py + oy;
+                double drawX = px + ox;
+                double drawY = py + oy;
 
                 if (hasPrev) {
                     // Connect to previous point so vertical jumps are drawn
-                    g2.drawLine(prevX, prevY, drawX, drawY);
+                    g2.drawLine((int)Math.round(prevX), (int)Math.round(prevY), (int)Math.round(drawX), (int)Math.round(drawY));
                 }
 
-                g2.fillRect(drawX, drawY, 3, 3);
+                g2.fillRect((int)Math.round(drawX), (int)Math.round(drawY), 3, 3);
 
                 prevX = drawX;
                 prevY = drawY;
@@ -153,22 +156,22 @@ public class Projectile {
         case "SINE":
             for (int i = 0; i < 15; i++) {
                 // Wave starts at current moving position
-                int px = (int)(x - i * 2 * Math.cos(angle));
-                int py = (int)(y - i * 2 * Math.sin(angle));
+                double px = (int)(x - i * 2 * Math.cos(angle));
+                double py = (int)(y - i * 2 * Math.sin(angle));
 
                 // Offset perpendicular to direction
-                int offset = (int)(Math.sin((x + y + i) * offsetAmt) * 14);
+                double offset = (int)(Math.sin((x + y + i) * offsetAmt) * 14);
 
-                int ox = (int)(offset * Math.cos(angle + Math.PI/2));
-                int oy = (int)(offset * Math.sin(angle + Math.PI/2));
+                double ox = (int)(offset * Math.cos(angle + Math.PI/2));
+                double oy = (int)(offset * Math.sin(angle + Math.PI/2));
 
-                g2.fillOval(px + ox, py + oy, 3, 3);
+                g2.fillOval((int)Math.round(px + ox), (int)Math.round(py + oy), 3, 3);
             }
             break;
 
 
         default:
-            g2.fillOval(x - size / 2, y - size / 2, size, size);
+        	g2.fillOval((int)(x - size / 2.0), (int)(y - size / 2.0), size, size);
     }
 
     }

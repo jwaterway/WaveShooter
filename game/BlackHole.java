@@ -4,7 +4,9 @@ import java.awt.*;
 import java.awt.geom.Point2D;
 import java.awt.RadialGradientPaint;
 
+
 public class BlackHole {
+	
     private double x, y, radius;
     private double vx = .5, vy = .23; // drift speed
     private int slowTimer = 0;
@@ -21,12 +23,12 @@ public class BlackHole {
     public double getX() { return x; }
     public double getY() { return y; }
     public double getRadius() { return radius; }
-    private double baseVx() { return 2.5; }   // your nominal drift (or store originals)
-    private double baseVy() { return 13.0; }
+    private static final double MIN_RADIUS = 6;
+    private static final double MAX_RADIUS = 80;
     
     public void applyDamage(double amount) {
         radius -= amount;
-        if (radius < 6) radius = 6; // minimum size
+        if (radius < MIN_RADIUS) radius = MIN_RADIUS;
     }
 
     public void applyKnockback(double hitDx, double hitDy, double power) {
@@ -52,7 +54,7 @@ public class BlackHole {
     }
 
     public void absorbStar() {
-        radius += 1; // slow growth
+        radius = Math.min(MAX_RADIUS, radius + .4);
     }
 
  
@@ -79,6 +81,8 @@ public class BlackHole {
 
         if (x - radius < 0 || x + radius > width)  vx = -vx;
         if (y - radius < 0 || y + radius > height) vy = -vy;
+        vx *= 0.995;
+        vy *= 0.995;
     }
 
 
