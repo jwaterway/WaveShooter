@@ -22,6 +22,7 @@ public class Projectile {
     public double getDx() { return dx; }
     public double getDy() { return dy; }
     public double getRadius() { return radius; }
+    public double getOffsetAmt() { return offsetAmt; }
     public boolean isAlive() { return alive; }
     public void kill() { alive = false; }
 

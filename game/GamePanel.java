@@ -21,15 +21,20 @@ public class GamePanel extends JPanel implements KeyListener {
 	boolean wave1Active = false;
 	
 	// firing rate (hold-to-fire)
-	long lastFireNs = 0;
-	long fireIntervalMs = 100;              // ~8 shots/sec; change to taste
+	double lastFireNs = 0;
+	double fireIntervalMs = 100;              // ~8 shots/sec; change to taste
 	int dx = 0, dy = 0; // player movement direction
-	public static final int WIDTH = 1200;
-	public static final int HEIGHT = 800;
-	private long lastGunSwitch = 0;
+	public static final int WIDTH = 1920;
+	public static final int HEIGHT = 1080;
+	public static final int NUMBEROFSTARS = 200;
+	private double lastGunSwitch = 0;
     private final long gunSwitchDelay = 50; // ms between switches
     public ArrayList<BlackHole> blackHoles = new ArrayList<>();
     public static ArrayList<ParticleRing> rings = new ArrayList<>();
+    
+    private double lastFrameTime = System.nanoTime();
+    private double startTime = System.nanoTime();
+    private double frameMs = 0, maxFrame = 16;
 
 
     // Game loop
@@ -52,17 +57,20 @@ public class GamePanel extends JPanel implements KeyListener {
         setBackground(Color.BLACK);
         setDoubleBuffered(true);
         
-        new javax.swing.Timer(16, e -> {   // ~60 FPS
+        
+        javax.swing.Timer timer = new javax.swing.Timer(16, e -> {
             update();
             repaint();
-        }).start();
+        });
+        timer.setCoalesce(false);
+        timer.start();
      // Example: make one in the middle of the screen
-        //blackHoles.add(new BlackHole(WIDTH-250, HEIGHT-250, 30));
+        blackHoles.add(new BlackHole(WIDTH-250, HEIGHT-250, 30));
         // generate stars
   
         player = new Player(WIDTH / 2, HEIGHT / 2, 40);
         spawnWave1();
-        for (int i = 0; i < 50; i++) {  // number of stars
+        for (int i = 0; i < NUMBEROFSTARS; i++) {  // number of stars
             stars.add(new Star(WIDTH, HEIGHT, Math.random()+.2)); 
             }
         for (BlackHole bh : blackHoles) {
@@ -91,15 +99,21 @@ public class GamePanel extends JPanel implements KeyListener {
 
 
     public void update() {
+    	double now = System.nanoTime();
+    	frameMs = (now - lastFrameTime) / 1_000_000.0;
+    	if (now - startTime > 2000000000) { 
+    		maxFrame = Math.max(maxFrame, frameMs);
+    		System.out.println(startTime + "    Now:  " +  (now - startTime) + "    max:   " + maxFrame + "FrameMS:" + frameMs);
+    	}
+    	lastFrameTime = now;
+    	
+    	
     	double vx = 0, vy = 0, dx = 0, dy = 0;
     	if (upPressed)   { vy -= 2; dy = -2; }
     	if (downPressed) { vy += 2; dy = 2; }
     	if (leftPressed) { vx -= 2; dx = -2; }
     	if (rightPressed) { vx += 2; dx = 2; }
 
-    	//player.x += vx;
-    	//player.y += vy;
-    	
     	if (player.spinAngle > Math.PI * 2) {
     	    player.spinAngle -= Math.PI * 2; // keep it bounded
     	}
@@ -139,7 +153,7 @@ public class GamePanel extends JPanel implements KeyListener {
                
         // inside update()
         if (cPressed) {
-            long now = System.currentTimeMillis();
+            now = System.currentTimeMillis();
             if (now - lastGunSwitch > gunSwitchDelay) {
                 Player.GunType[] guns = Player.GunType.values();
                 int next = (player.getGun().ordinal() + 1) % guns.length;
@@ -213,7 +227,51 @@ public class GamePanel extends JPanel implements KeyListener {
                 }
             }
         }
+        for (int i = projectiles.size() - 1; i >= 0; i--) {
+            Projectile p = projectiles.get(i);
+            if (!p.isAlive()) {
+                projectiles.remove(i);
+                continue;
+            }
 
+            for (Enemy e : enemies) {
+                if (!e.isAlive()) continue;
+
+                double dx2 = p.getX() - e.getX();
+                double dy2 = p.getY() - e.getY();
+                double hitR = p.getRadius() + e.getRadius();
+
+                if (dx2 * dx2 + dy2 * dy2 <= hitR * hitR) {
+                    double dmg = getProjectileDamage(p);
+                    e.takeDamage(dmg);
+
+                    // projectile behavior by gun type
+                    switch (p.getGunType()) {
+                        case TRIANGLE:
+                            p.kill();
+                            break;
+
+                        case SQUARE:
+                            p.kill();
+                            break;
+
+                        case SINE:
+                            p.incrementPierce();
+                            if (p.getPierceCount() >= 3) {
+                                p.kill();
+                            }
+                            break;
+                    }
+
+                    // enemy death effect
+                    if (!e.isAlive()) {
+                        spawnEnemyExplosion(e.getX(), e.getY(), e.getRadius(), p.getGunType());
+                    }
+
+                    break;
+                }
+            }
+        }
         if (wave1Active) {
             waveT += 1;
 
@@ -222,7 +280,7 @@ public class GamePanel extends JPanel implements KeyListener {
 
                 double enemyT = waveT - e.getPathOffset();
                 if (enemyT >= 0) {
-                    Point p = getWave1Path(enemyT);
+                	Point p = EnemyPaths.getWave1Path(enemyT, WIDTH);
                     e.setPosition(p.x, p.y);
                 }
             }
@@ -237,51 +295,7 @@ public class GamePanel extends JPanel implements KeyListener {
 
        
     }
-    private Point getWave1Path(double t) {
-        double x;
-        double y;
-
-        double rowHeight = 50;
-        int cycle = (int)(t / 260.0);
-        double localT = t % 520.0;
-
-        y = 120 + cycle * rowHeight;
-
-        if (localT < 40) {
-            // fast entry from far right to 80%
-            double u = localT / 40.0;
-            x = (WIDTH + 120) + ((WIDTH * 0.80) - (WIDTH + 120)) * u;
-
-        } else if (localT < 220) {
-            // slow crawl from 80% to 20%
-            double u = (localT - 40) / 180.0;
-            x = (WIDTH * 0.80) + ((WIDTH * 0.20) - (WIDTH * 0.80)) * u;
-
-        } else if (localT < 260) {
-            // immediate zoom off left
-            double u = (localT - 220) / 40.0;
-            x = (WIDTH * 0.20) + ((-120) - (WIDTH * 0.20)) * u;
-
-        } else if (localT < 300) {
-            // fast re-entry from far left to 20%
-            double u = (localT - 260) / 40.0;
-            x = (-120) + ((WIDTH * 0.20) - (-120)) * u;
-
-        } else if (localT < 480) {
-            // slow crawl from 20% to 80%
-            double u = (localT - 300) / 180.0;
-            x = (WIDTH * 0.20) + ((WIDTH * 0.80) - (WIDTH * 0.20)) * u;
-
-        } else {
-            // immediate zoom off right
-            double u = (localT - 480) / 40.0;
-            x = (WIDTH * 0.80) + ((WIDTH + 120) - (WIDTH * 0.80)) * u;
-        }
-
-        return new Point((int)Math.round(x), (int)Math.round(y));
-    }
-    
-    
+   
     public void playGunSound(int screenWidth) {
         // Map offsetAmt to MIDI velocity (volume)
         int velocity = (int)(player.offsetAmt * 30); 
@@ -345,19 +359,16 @@ public class GamePanel extends JPanel implements KeyListener {
 
         int radius = 22;
         double health = 8.0;
-
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 0));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 20));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 40));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 60));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 200));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 220));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 240));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 260));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 600));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 620));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 640));
-        enemies.add(new Enemy(WIDTH + 100, 120, radius, health, 660));
+        
+        for (int i = 0; i < 8; i++) {
+        	for (int j = 0; j < 4; j++) {
+        		
+        		enemies.add(new Enemy(WIDTH + 100, 120, radius, health, (j * 260) + (i * 20)));
+        	}
+        	
+        }
+        
+  
     }
     public static Point safeRandomPoint(int width, int height, java.util.List<BlackHole> holes) {
         final int margin = 20;
@@ -408,7 +419,7 @@ public class GamePanel extends JPanel implements KeyListener {
 
         final ArrayList<Star> starsSnap         = new ArrayList<>(stars);
         final ArrayList<Projectile> projsSnap   = new ArrayList<>(projectiles);
-       final ArrayList<BlackHole> holesSnap    = new ArrayList<>(blackHoles);
+        final ArrayList<BlackHole> holesSnap    = new ArrayList<>(blackHoles);
         final ArrayList<ParticleRing> ringsSnap = new ArrayList<>(rings);
         final ArrayList<Enemy> enemiesSnap      = new ArrayList<>(enemies);
 
@@ -438,10 +449,12 @@ public class GamePanel extends JPanel implements KeyListener {
 
         g2.setColor(Color.WHITE);
         g2.drawString("Offset: " + String.format("%.2f", player.offsetAmt), 20, 20);
-        g2.drawString("FPS: " + FPS, 20, 40);
+        g2.drawString("Frame ms: " + String.format("%.2f", frameMs), 20, 120);
+        g2.drawString("Minimum FPS: " + String.format("%.2f", 1000 / maxFrame), 20, 140);
+        g2.drawString("FPS: " + String.format("%.2f", 1000 / frameMs), 20, 100);
         g2.drawString("Gun Angle: " + String.format("%.2f", player.getAngle()) + "°", 20, 60);
         g2.drawString("Projectiles: " + projectiles.size(), 20, 80);
-        g2.drawString("Enemies: " + enemies.size(), 20, 100);
+        g2.drawString("Enemies: " + enemies.size(), 20, 40);
     }
 
     // Input handling
@@ -486,4 +499,31 @@ public class GamePanel extends JPanel implements KeyListener {
         }
     }
 
+
+private double getProjectileDamage(Projectile p) {
+    double power = p.getOffsetAmt();   // assuming Projectile has this getter
+    Player.GunType gun = p.getGunType();
+
+    switch (gun) {
+        case TRIANGLE:
+            return 1.6 * power;   // big hit
+        case SQUARE:
+            return 1.0 * power;   // medium
+        case SINE:
+            return 0.65 * power;  // lighter, better for multi-hit behavior later
+        default:
+            return 1.0 * power;
+    }
+}
+private void spawnEnemyExplosion(double x, double y, int radius, Player.GunType gun) {
+    rings.add(new ParticleRing(x, y, radius));
+
+    // optional extra rings for stronger feel
+    if (gun == Player.GunType.TRIANGLE) {
+        rings.add(new ParticleRing(x, y, radius + 8));
+        rings.add(new ParticleRing(x, y, radius + 16));
+    } else if (gun == Player.GunType.SQUARE) {
+        rings.add(new ParticleRing(x, y, radius + 6));
+    }
+}
 }

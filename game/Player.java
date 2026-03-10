@@ -22,8 +22,8 @@ public class Player {
     double vx = 0, vy = 0;
     double ax = 0, ay = 0;
 
-    double maxSpeed = 9;
-    double accel = 0.45;
+    double maxSpeed = 16;
+    double accel = 0.65;
     double friction = 0.9;
     double bounceFactor = 1.0; // 1.0 = same speed back, 0.8 = lose some speed
 

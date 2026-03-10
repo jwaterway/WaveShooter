@@ -26,7 +26,7 @@ public class Enemy {
         this.y = y;
     }
 
-    public void takeDamage(int dmg) {
+    public void takeDamage(double dmg) {
         health -= dmg;
         if (health <= 0) alive = false;
     }
