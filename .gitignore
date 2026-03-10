@@ -8,6 +8,9 @@
 bin/
 build/
 out/
+node_modules/
+dist/
+.tools/
 
 # IDE files
 *.iml

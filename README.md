@@ -29,6 +29,26 @@ javac game\*.java
 java game.Main
 ```
 
+## Browser Prototype (Experiment Branch)
+This branch also includes a browser prototype port using Vite + TypeScript.
+
+Run:
+
+```powershell
+npm install
+npm run dev
+```
+
+Then open the local Vite URL (typically `http://localhost:5173`).
+
+Web controls:
+- `Arrow keys`: move
+- `Mouse`: aim
+- `Mouse hold` or `Ctrl`: fire
+- `1/2/3`: switch gun
+- `+/-`: adjust waveform offset
+- `R`: restart after win/loss
+
 ## SoundFont Setup (Important)
 `Main.java` currently initializes MIDI with a hardcoded absolute path:
 
