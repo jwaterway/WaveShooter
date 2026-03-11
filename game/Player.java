@@ -29,6 +29,7 @@ public class Player {
 
     enum GunType { TRIANGLE, SQUARE, SINE }
     GunType currentGun = GunType.TRIANGLE;
+	public int score = 0;
 
     public Player(double x, double y, int radius) {
         this.x = x;

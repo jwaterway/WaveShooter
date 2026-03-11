@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "Main",
+            "request": "launch",
+            "mainClass": "Main",
+            "projectName": "WaveShooter"
+        },
+        {
+            "type": "java",
+            "name": "Launch Main",
+            "request": "launch",
+            "mainClass": "game.Main",
+            "projectName": "WaveShooter"
+        },
+        {
+            "type": "java",
+            "name": "Launch WaveShooter",
+            "request": "launch",
+            "mainClass": "game.Main",
+            "projectName": "WaveShooter",
+            "cwd": "${workspaceFolder}",
+            "classPaths": [
+                "${workspaceFolder}\\bin"
+            ]
+        }
+    ]
+}
