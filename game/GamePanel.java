@@ -22,7 +22,7 @@ public class GamePanel extends JPanel implements KeyListener {
 	
 	// firing rate (hold-to-fire)
 	double lastFireNs = 0;
-	double fireIntervalMs = 100;              // ~8 shots/sec; change to taste
+	double fireIntervalMs = 20;              // ~8 shots/sec; change to taste
 	int dx = 0, dy = 0; // player movement direction
 	public static final int WIDTH = 1920;
 	public static final int HEIGHT = 1080;
@@ -158,6 +158,7 @@ public class GamePanel extends JPanel implements KeyListener {
                 Player.GunType[] guns = Player.GunType.values();
                 int next = (player.getGun().ordinal() + 1) % guns.length;
                 player.setGun(guns[next]);
+                AudioManager.playSfx("switchRay", 0.8f);
                 lastGunSwitch = now;
             }
         }
@@ -186,6 +187,7 @@ public class GamePanel extends JPanel implements KeyListener {
                 double hitR = bh.getRadius() + p.getRadius();
                 if (dist2 <= hitR * hitR) {
                     // Hit! Apply effect based on the current gun
+                	AudioManager.playSfx("blackholehit", 0.8f);
                     Player.GunType gun = player.getGun();
                     if (gun == null) gun = player.getGun(); // fallback, just in case
                     switch (gun) {
@@ -249,14 +251,17 @@ public class GamePanel extends JPanel implements KeyListener {
                     switch (p.getGunType()) {
                         case TRIANGLE:
                             p.kill();
+                            AudioManager.playSfx("hitTri", 4f);
                             break;
 
                         case SQUARE:
                             p.kill();
+                            AudioManager.playSfx("hitSqr", 3f);
                             break;
 
                         case SINE:
                             p.incrementPierce();
+                            AudioManager.playSfx("hitSin", 3f);
                             if (p.getPierceCount() >= 3) {
                                 p.kill();
                             }
@@ -348,7 +353,19 @@ public class GamePanel extends JPanel implements KeyListener {
         	double startY = player.getY() + (player.radius + spawnOffset) * Math.sin(rad);
 
         	projectiles.add(new Projectile(startX, startY, rad, player.getGun(), player.offsetAmt));
-            playGunSound(WIDTH);
+            //playGunSound(WIDTH);
+        	switch (player.getGun() ) {
+        		case TRIANGLE:
+        			AudioManager.playSfx("shootTri");
+        		case SQUARE:
+        			AudioManager.playSfx("shootSqr");
+        		case SINE:
+        			AudioManager.playSfx("shootSin");
+        			
+        			
+        	
+        	}
+            
             lastFireNs = nowNs;
         }
     }
@@ -358,10 +375,10 @@ public class GamePanel extends JPanel implements KeyListener {
         wave1Active = true;
 
         int radius = 22;
-        double health = 8.0;
+        double health = 1.0;
         
         for (int i = 0; i < 8; i++) {
-        	for (int j = 0; j < 4; j++) {
+        	for (int j = 0; j < 12; j++) {
         		
         		enemies.add(new Enemy(WIDTH + 100, 120, radius, health, (j * 260) + (i * 20)));
         	}
@@ -448,13 +465,14 @@ public class GamePanel extends JPanel implements KeyListener {
         }
 
         g2.setColor(Color.WHITE);
-        g2.drawString("Offset: " + String.format("%.2f", player.offsetAmt), 20, 20);
-        g2.drawString("Frame ms: " + String.format("%.2f", frameMs), 20, 120);
-        g2.drawString("Minimum FPS: " + String.format("%.2f", 1000 / maxFrame), 20, 140);
-        g2.drawString("FPS: " + String.format("%.2f", 1000 / frameMs), 20, 100);
+        g2.drawString("Offset: " + String.format("%.2f", player.offsetAmt), 20, 20);        
+        g2.drawString("Enemies: " + enemies.size(), 20, 40);
         g2.drawString("Gun Angle: " + String.format("%.2f", player.getAngle()) + "°", 20, 60);
         g2.drawString("Projectiles: " + projectiles.size(), 20, 80);
-        g2.drawString("Enemies: " + enemies.size(), 20, 40);
+        g2.drawString("FPS: " + String.format("%.2f", 1000 / frameMs), 20, 100);
+        g2.drawString("Frame ms: " + String.format("%.2f", frameMs), 20, 120);
+        g2.drawString("Minimum FPS: " + String.format("%.2f", 1000 / maxFrame), 20, 140);
+        g2.drawString("Score: " + player.score, 20, 160);
     }
 
     // Input handling
@@ -517,7 +535,8 @@ private double getProjectileDamage(Projectile p) {
 }
 private void spawnEnemyExplosion(double x, double y, int radius, Player.GunType gun) {
     rings.add(new ParticleRing(x, y, radius));
-
+    player.score = player.score + 50;
+    AudioManager.playSfx("explosion");
     // optional extra rings for stronger feel
     if (gun == Player.GunType.TRIANGLE) {
         rings.add(new ParticleRing(x, y, radius + 8));
