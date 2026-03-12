@@ -8,16 +8,26 @@ public class Enemy {
     private double x, y;
     private final int radius;
     private double health;
+    private final double maxHealth;  // Track max health for accurate health bar ratio
     private boolean alive = true;
 
     // how far behind the lead enemy this one is on the shared path
     private final double pathOffset;
+
+    // shooting state
+    private int shotsFired = 0;
+    private final int maxShots = 6;
+    private double gunAngle = Math.PI / 2.0; // pointing downward by default
+    private int lastPassNumber = -1;  // Track which pass/row the enemy is on
+    private int framesSinceRowStart = 0;  // Track frames elapsed in current row for staggered firing
+    private long lastHitTime = 0;  // Track when enemy was last hit for health bar display
 
     public Enemy(double x, double y, int radius, double health, double pathOffset) {
         this.x = x;
         this.y = y;
         this.radius = radius;
         this.health = health;
+        this.maxHealth = health;  // Store max health at creation
         this.pathOffset = pathOffset;
     }
 
@@ -29,7 +39,12 @@ public class Enemy {
     public void takeDamage(double dmg) {
         health -= dmg;
         if (health <= 0) alive = false;
+        lastHitTime = System.currentTimeMillis();  // Track hit for health bar display
     }
+    
+    public long getLastHitTime() { return lastHitTime; }
+    public double getHealth() { return health; }
+    public double getMaxHealth() { return maxHealth; }
 
     public boolean isAlive() {
         return alive;
@@ -51,9 +66,25 @@ public class Enemy {
         return pathOffset;
     }
 
-    public double getHealth() {
-        return health;
+    public int getShotsFired() { return shotsFired; }
+    public void incrementShots() { shotsFired++; }
+    public void resetShots() { shotsFired = 0; }
+    public boolean canShoot() { return shotsFired < maxShots; }
+    public int getFramesSinceRowStart() { return framesSinceRowStart; }
+    public void incrementFrameCounter() { framesSinceRowStart++; }
+    
+    // Check if enemy has advanced to a new pass (row) and reset shots
+    public void updatePassNumber(double waveT) {
+        int currentPass = (int)((waveT - pathOffset) / 260);
+        if (currentPass > lastPassNumber) {
+            lastPassNumber = currentPass;
+            resetShots();  // Reset shot counter for new pass
+            framesSinceRowStart = 0;  // Reset frame counter for new row
+        }
     }
+
+    public double getGunAngle() { return gunAngle; }
+    public void setGunAngle(double a) { gunAngle = a; }
 
     public void draw(Graphics2D g2) {
         int drawX = (int)Math.round(x);
@@ -154,8 +185,30 @@ public class Enemy {
         g2.setStroke(new BasicStroke(1.5f));
         g2.drawOval(drawX - coreW / 2, drawY - coreH / 2, coreW, coreH);
 
+        // draw simple gun extending from centre to just outside the diamond shell
+        int extra = 8; // pixels past the diamond edge
+        int gunLen = radius + extra;
+        int gx1 = drawX;
+        int gy1 = drawY;
+        int gx2 = (int)Math.round(x + Math.cos(gunAngle) * gunLen);
+        int gy2 = (int)Math.round(y + Math.sin(gunAngle) * gunLen);
+        g2.setColor(new Color(255, 200, 50));
+        g2.setStroke(new BasicStroke(3f));
+        g2.drawLine(gx1, gy1, gx2, gy2);
+
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, oldAA);
         g2.setPaint(oldPaint);
         g2.setStroke(oldStroke);
+    }
+
+    /**
+     * Returns the tip point of the gun (used for spawning shots).
+     */
+    public Point getGunTip() {
+        int extra = 8;
+        double len = radius + extra;
+        double tx = x + Math.cos(gunAngle) * len;
+        double ty = y + Math.sin(gunAngle) * len;
+        return new Point((int)Math.round(tx), (int)Math.round(ty));
     }
 }

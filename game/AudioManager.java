@@ -27,7 +27,7 @@ public final class AudioManager {
         loadSfx("pickup", "/audio/warp.wav", 4);
 
         // load music here
-        music.load("/audio/darkalientexture.wav");
+        //music.load("/audio/darkalientexture.wav");
 
         refreshVolumes();
     }

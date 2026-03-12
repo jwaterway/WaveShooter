@@ -1,10 +1,16 @@
 package game;
 
 import javax.swing.JPanel;
+import javax.swing.AbstractAction;
+import javax.swing.KeyStroke;
+import javax.swing.InputMap;
+import javax.swing.ActionMap;
 import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
+import java.awt.event.ActionEvent;
 import java.util.ArrayList;
+import java.util.Random;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
 import java.awt.event.MouseAdapter;
@@ -17,12 +23,16 @@ public class GamePanel extends JPanel implements KeyListener {
 	ArrayList<Projectile> projectiles = new ArrayList<>();  // waves
 	ArrayList<Star> stars = new ArrayList<>();
 	ArrayList<Enemy> enemies = new ArrayList<>();
+	ArrayList<EnemyShot> enemyShots = new ArrayList<>();
+	ArrayList<Shard> shards = new ArrayList<>();
+	ArrayList<PowerUp> powerUps = new ArrayList<>();
+	ArrayList<SmokeParticle> smokes = new ArrayList<>();
 	double waveT = 0;
 	boolean wave1Active = false;
 	
 	// firing rate (hold-to-fire)
 	double lastFireNs = 0;
-	double fireIntervalMs = 20;              // ~8 shots/sec; change to taste
+	double fireIntervalMs = 30;              // ~8 shots/sec; change to taste
 	int dx = 0, dy = 0; // player movement direction
 	public static final int WIDTH = 1920;
 	public static final int HEIGHT = 1080;
@@ -35,6 +45,7 @@ public class GamePanel extends JPanel implements KeyListener {
     private double lastFrameTime = System.nanoTime();
     private double startTime = System.nanoTime();
     private double frameMs = 0, maxFrame = 16;
+    private final Random rng = new Random();
 
 
     // Game loop
@@ -42,6 +53,9 @@ public class GamePanel extends JPanel implements KeyListener {
 
     // Player
     Player player;
+    boolean playerDead = false;
+    boolean paused = false;
+    boolean mouseDown = false;
     
 
     // Input
@@ -65,7 +79,7 @@ public class GamePanel extends JPanel implements KeyListener {
         timer.setCoalesce(false);
         timer.start();
      // Example: make one in the middle of the screen
-        blackHoles.add(new BlackHole(WIDTH-250, HEIGHT-250, 30));
+        //blackHoles.add(new BlackHole(WIDTH-250, HEIGHT-250, 30));
         // generate stars
   
         player = new Player(WIDTH / 2, HEIGHT / 2, 40);
@@ -86,12 +100,34 @@ public class GamePanel extends JPanel implements KeyListener {
                 double dy = e.getY() - player.y;
                 player.angle = Math.toDegrees(Math.atan2(dy, dx));
             }
+            
+            @Override
+            public void mouseDragged(MouseEvent e) {
+                // Update angle while dragging (firing) too
+                double dx = e.getX() - player.x;
+                double dy = e.getY() - player.y;
+                player.angle = Math.toDegrees(Math.atan2(dy, dx));
+            }
         });
         addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
-               	tryFire();
+                if (e.getButton() == MouseEvent.BUTTON1) {
+                    mouseDown = true;  // Left click - hold to fire
+                } else if (e.getButton() == MouseEvent.BUTTON3) {
+                    // Right click - switch weapon
+                    Player.GunType[] guns = Player.GunType.values();
+                    int next = (player.getGun().ordinal() + 1) % guns.length;
+                    player.setGun(guns[next]);
+                    AudioManager.playSfx("switchRay", 0.8f);
                 }
+            }
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (e.getButton() == MouseEvent.BUTTON1) {
+                    mouseDown = false;  // Left click released
+                }
+            }
         });
 
 
@@ -99,11 +135,12 @@ public class GamePanel extends JPanel implements KeyListener {
 
 
     public void update() {
+    	if (paused) return;  // Skip update when paused
     	double now = System.nanoTime();
     	frameMs = (now - lastFrameTime) / 1_000_000.0;
     	if (now - startTime > 2000000000) { 
     		maxFrame = Math.max(maxFrame, frameMs);
-    		System.out.println(startTime + "    Now:  " +  (now - startTime) + "    max:   " + maxFrame + "FrameMS:" + frameMs);
+    		//System.out.println(startTime + "    Now:  " +  (now - startTime) + "    max:   " + maxFrame + "FrameMS:" + frameMs);
     	}
     	lastFrameTime = now;
     	
@@ -117,7 +154,7 @@ public class GamePanel extends JPanel implements KeyListener {
     	if (player.spinAngle > Math.PI * 2) {
     	    player.spinAngle -= Math.PI * 2; // keep it bounded
     	}
-    	for (Star s : stars) {
+    	for (Star s : new ArrayList<>(stars)) {
     	    s.update(WIDTH, HEIGHT, vx, vy, player.getAngle());
     	    s.updateWithBlackHoles(blackHoles);
     	}
@@ -140,7 +177,10 @@ public class GamePanel extends JPanel implements KeyListener {
     	    player.rollOffset += Math.sqrt(vx*vx + vy*vy) * 0.2;
     	}
 
-        // hold-to-fire
+        // hold-to-fire with mouse
+        if (mouseDown) tryFire();
+        
+        // hold-to-fire with control key
         if (controlPressed) tryFire();
 
         // continuous + / - while held
@@ -247,6 +287,14 @@ public class GamePanel extends JPanel implements KeyListener {
                     double dmg = getProjectileDamage(p);
                     e.takeDamage(dmg);
 
+                    // Spark effect when enemy is hit (electric-like sparks)
+                    for (int spark = 0; spark < 4; spark++) {
+                        double sparkAngle = (spark / 4.0) * 2 * Math.PI;
+                        Shard sparkParticle = new Shard(e.getX(), e.getY(), sparkAngle, 2.0, new Color(200, 255, 255), 1);
+                        shards.add(sparkParticle);
+                    }
+                    rings.add(new ParticleRing(e.getX(), e.getY(), 8));
+
                     // projectile behavior by gun type
                     switch (p.getGunType()) {
                         case TRIANGLE:
@@ -277,6 +325,8 @@ public class GamePanel extends JPanel implements KeyListener {
                 }
             }
         }
+        
+        // POSITION ENEMIES FIRST (before shooting phase)
         if (wave1Active) {
             waveT += 1;
 
@@ -288,13 +338,117 @@ public class GamePanel extends JPanel implements KeyListener {
                 	Point p = EnemyPaths.getWave1Path(enemyT, WIDTH);
                     e.setPosition(p.x, p.y);
                 }
+                // Increment frame counter for staggered firing
+                e.incrementFrameCounter();
             }
         }
+        
+        // ENEMY SHOOTING PHASE (now enemies are positioned)
+        int phase = (int)(waveT / 30) % 3;
+        if (wave1Active) {
+            for (Enemy e : enemies) {
+                // Check if enemy has advanced to new row/pass and reset shots
+                e.updatePassNumber(waveT);
+                
+                if (!e.isAlive() || !e.canShoot()) continue;
+                int col = (int)(e.getPathOffset() / 260); // approximate column index
+                // Fire based on column phase AND staggered frame timing (every 11 frames)
+                if (col % 3 == phase && e.getFramesSinceRowStart() % 11 == 0) {
+                    Point tip = e.getGunTip();
+                    enemyShots.add(new EnemyShot(tip.x, tip.y, e.getGunAngle()));
+                    e.incrementShots();
+                    AudioManager.playSfx("enemyShoot", 0.6f);
+                }
+            }
+        }
+        
+        // update enemy shots and check player collision
+        for (int i = enemyShots.size() - 1; i >= 0; i--) {
+            EnemyShot s = enemyShots.get(i);
+            s.update();
+            if (!s.isAlive()) { enemyShots.remove(i); continue; }
+            
+            // Spawn tiny sparks trailing from enemy shot
+            if (s.shouldSpawnSpark()) {
+                double sparkAngle = Math.random() * Math.PI * 2;
+                Shard sparkParticle = new Shard(s.getX(), s.getY(), sparkAngle, 0.5, new Color(200, 150, 255), 1);
+                shards.add(sparkParticle);
+            }
+            
+            // CHECK PLAYER HIT
+            double dxP = player.getX() - s.getX();
+            double dyP = player.getY() - s.getY();
+            double hitR = player.radius + s.getRadius();
+            if (dxP * dxP + dyP * dyP <= hitR * hitR) {
+                player.takeDamage(10.0);
+                player.applyKnockback(dxP, dyP, 5.0);
+                AudioManager.playSfx("playerhit");
+                // Spark effect on hit
+                for (int spark = 0; spark < 6; spark++) {
+                    double sparkAngle = (spark / 6.0) * 2 * Math.PI;
+                    Shard sparkParticle = new Shard(s.getX(), s.getY(), sparkAngle, 7.0, new Color(255, 100, 200), 1);
+                    shards.add(sparkParticle);
+                }
+                rings.add(new ParticleRing(s.getX(), s.getY(), 10));
+                enemyShots.remove(i);
+            }
+        }
+        
+        // PLAYER ↔ ENEMY COLLISION
+        for (Enemy e : enemies) {
+            if (!e.isAlive()) continue;
+            double dxE = player.getX() - e.getX();
+            double dyE = player.getY() - e.getY();
+            double hitR = player.radius + e.getRadius();
+            if (dxE * dxE + dyE * dyE <= hitR * hitR) {
+                // bounce player away, lose flat 50%, enemy explodes
+                player.applyKnockback(dxE, dyE, 8.0);
+                player.takeDamage(50.0);
+                AudioManager.playSfx("playerhit");
+                spawnEnemyExplosion(e.getX(), e.getY(), e.getRadius(), Player.GunType.TRIANGLE);
+                e.takeDamage(e.getHealth());
+            }
+        }
+
+        // Player death: spawn a massive explosion once when health reaches 0
+        if (player.getHealth() <= 0 && !playerDead) {
+            spawnPlayerExplosion(player.getX(), player.getY(), player.radius);
+            playerDead = true;
+            // clear active threats so explosion feels final
+            enemyShots.clear();
+            enemies.clear();
+            projectiles.clear();
+            AudioManager.playSfx("explosion", 1.0f);
+        }
+        
         // update rings and cull dead ones
         for (int i = rings.size() - 1; i >= 0; i--) {
             ParticleRing r = rings.get(i);
             r.update();
             if (!r.isAlive()) rings.remove(i);
+        }
+        // update shards
+        for (int i = shards.size() - 1; i >= 0; i--) {
+            Shard s = shards.get(i);
+            s.update();
+            // Check if shard should split into smaller fragments
+            if (s.shouldSplit()) {
+                s.markSplitDone();
+                // Spawn 4 smaller shards around the parent in random directions
+                for (int j = 0; j < 4; j++) {
+                    double angle = Math.random() * 2 * Math.PI;  // Random direction
+                    Shard child = new Shard(s.getX(), s.getY(), angle, 6.0, new Color(255, 180, 50), 1);
+                    shards.add(child);
+                }
+                rings.add(new ParticleRing(s.getX(), s.getY(), 12));
+            }
+            if (!s.isAlive()) shards.remove(i);
+        }
+        // update smoke
+        for (int i = smokes.size() - 1; i >= 0; i--) {
+            SmokeParticle sp = smokes.get(i);
+            sp.update();
+            if (!sp.isAlive()) smokes.remove(i);
         }
         
 
@@ -375,7 +529,7 @@ public class GamePanel extends JPanel implements KeyListener {
         wave1Active = true;
 
         int radius = 22;
-        double health = 1.0;
+        double health = 20.0;
         
         for (int i = 0; i < 8; i++) {
         	for (int j = 0; j < 12; j++) {
@@ -439,15 +593,26 @@ public class GamePanel extends JPanel implements KeyListener {
         final ArrayList<BlackHole> holesSnap    = new ArrayList<>(blackHoles);
         final ArrayList<ParticleRing> ringsSnap = new ArrayList<>(rings);
         final ArrayList<Enemy> enemiesSnap      = new ArrayList<>(enemies);
+        final ArrayList<Shard> shardsSnap       = new ArrayList<>(shards);
+        final ArrayList<SmokeParticle> smokesSnap = new ArrayList<>(smokes);
+        final ArrayList<EnemyShot> enemyShotsSnap = new ArrayList<>(enemyShots);
 
         for (Star s : starsSnap) {
             s.draw(g2, holesSnap);
         }
 
-        player.draw(g2);
+        // Draw player only if alive
+        if (!playerDead) {
+            player.draw(g2);
+        }
 
         for (Projectile p : projsSnap) {
             p.draw(g2);
+        }
+
+        // Draw enemy shots
+        for (EnemyShot es : enemyShotsSnap) {
+            es.draw(g2);
         }
 
         for (BlackHole bh : holesSnap) {
@@ -458,11 +623,37 @@ public class GamePanel extends JPanel implements KeyListener {
             ring.draw(g2);
         }
 
+        for (Shard shard : shardsSnap) {
+            shard.draw(g2);
+        }
+
+        for (SmokeParticle smoke : smokesSnap) {
+            smoke.draw(g2);
+        }
+
         for (Enemy e : enemiesSnap) {
             if (e.isAlive()) {
                 e.draw(g2);
+                // Draw health bar for recently hit enemies with fade effect
+                long timeSinceHit = System.currentTimeMillis() - e.getLastHitTime();
+                if (timeSinceHit < 1500) {  // Show for 1.5 seconds with fade
+                    double healthRatio = e.getHealth() / e.getMaxHealth();  // Accurate health ratio
+                    // Calculate fade alpha: full opacity for first 500ms, then fade to 0 by 1500ms
+                    double fadeAlpha = Math.max(0, 1.0 - (timeSinceHit - 500.0) / 1000.0);
+                    drawGradientHealthBar(g2, (int)e.getX() - 12, (int)e.getY() - 30, 24, 4, healthRatio, false, fadeAlpha);
+                }
             }
         }
+
+        // Draw health bar
+        double healthRatio = player.getHealth() / 100.0; // assuming max health is 100
+        int barWidth = 200;
+        int barHeight = 20;
+        int barX = WIDTH - barWidth - 20;
+        int barY = 20;
+        
+        // Draw glowing gradient health bar (green when full, red when empty)
+        drawGradientHealthBar(g2, barX, barY, barWidth, barHeight, healthRatio, true, 1.0);
 
         g2.setColor(Color.WHITE);
         g2.drawString("Offset: " + String.format("%.2f", player.offsetAmt), 20, 20);        
@@ -473,6 +664,49 @@ public class GamePanel extends JPanel implements KeyListener {
         g2.drawString("Frame ms: " + String.format("%.2f", frameMs), 20, 120);
         g2.drawString("Minimum FPS: " + String.format("%.2f", 1000 / maxFrame), 20, 140);
         g2.drawString("Score: " + player.score, 20, 160);
+        
+        // Draw pause overlay if paused
+        if (paused && !playerDead) {
+            g2.setColor(new Color(0, 0, 0, 150));
+            g2.fillRect(0, 0, WIDTH, HEIGHT);
+            g2.setColor(Color.WHITE);
+            g2.setFont(new Font("Arial", Font.BOLD, 48));
+            FontMetrics fm = g2.getFontMetrics();
+            String pauseText = "PAUSED";
+            int x = (WIDTH - fm.stringWidth(pauseText)) / 2;
+            int y = (HEIGHT / 2) - 40;
+            g2.drawString(pauseText, x, y);
+            g2.setFont(new Font("Arial", Font.PLAIN, 24));
+            fm = g2.getFontMetrics();
+            String resumeText = "Press P to resume";
+            x = (WIDTH - fm.stringWidth(resumeText)) / 2;
+            g2.drawString(resumeText, x, y + 60);
+        }
+        
+        // Draw game over screen if player is dead
+        if (playerDead) {
+            g2.setColor(new Color(0, 0, 0, 200));
+            g2.fillRect(0, 0, WIDTH, HEIGHT);
+            g2.setColor(Color.WHITE);
+            g2.setFont(new Font("Arial", Font.BOLD, 64));
+            FontMetrics fm = g2.getFontMetrics();
+            String gameOverText = "GAME OVER";
+            int x = (WIDTH - fm.stringWidth(gameOverText)) / 2;
+            int y = (HEIGHT / 2) - 80;
+            g2.drawString(gameOverText, x, y);
+            
+            g2.setFont(new Font("Arial", Font.PLAIN, 32));
+            fm = g2.getFontMetrics();
+            String scoreText = "Final Score: " + player.score;
+            x = (WIDTH - fm.stringWidth(scoreText)) / 2;
+            g2.drawString(scoreText, x, y + 80);
+            
+            g2.setFont(new Font("Arial", Font.PLAIN, 24));
+            fm = g2.getFontMetrics();
+            String optionsText = "R to Restart  |  Q to Quit";
+            x = (WIDTH - fm.stringWidth(optionsText)) / 2;
+            g2.drawString(optionsText, x, y + 150);
+        }
     }
 
     // Input handling
@@ -493,6 +727,9 @@ public class GamePanel extends JPanel implements KeyListener {
             case KeyEvent.VK_ADD:    plusPressed  = true; break;   // numpad '+'
             case KeyEvent.VK_MINUS:  minusPressed = true; break;   // main keyboard '-'
             case KeyEvent.VK_SUBTRACT: minusPressed = true; break; // numpad '-'
+            case KeyEvent.VK_P: paused = !paused; break; // Toggle pause
+            case KeyEvent.VK_R: if (playerDead) restartGame(); break; // Restart on game over
+            case KeyEvent.VK_Q: if (playerDead) System.exit(0); break; // Quit on game over
             case KeyEvent.VK_1: player.setGun(Player.GunType.TRIANGLE); break;
             case KeyEvent.VK_2: player.setGun(Player.GunType.SQUARE);   break;
             case KeyEvent.VK_3: player.setGun(Player.GunType.SINE);     break;
@@ -537,6 +774,18 @@ private void spawnEnemyExplosion(double x, double y, int radius, Player.GunType 
     rings.add(new ParticleRing(x, y, radius));
     player.score = player.score + 50;
     AudioManager.playSfx("explosion");
+    // shards flying out (reduced by half)
+    for (int i = 0; i < 4; i++) {
+        double ang = rng.nextDouble() * Math.PI * 2;
+        double spd = 1 + rng.nextDouble() * 3;
+        shards.add(new Shard(x, y, ang, spd, new Color(255, 200, 50)));
+    }
+    // light smoke wisps (reduced by half)
+    for (int i = 0; i < 2; i++) {
+        double sx = x + (rng.nextDouble() - 0.5) * radius;
+        double sy = y + (rng.nextDouble() - 0.5) * radius;
+        smokes.add(new SmokeParticle(sx, sy));
+    }
     // optional extra rings for stronger feel
     if (gun == Player.GunType.TRIANGLE) {
         rings.add(new ParticleRing(x, y, radius + 8));
@@ -544,5 +793,90 @@ private void spawnEnemyExplosion(double x, double y, int radius, Player.GunType 
     } else if (gun == Player.GunType.SQUARE) {
         rings.add(new ParticleRing(x, y, radius + 6));
     }
+}
+
+private void restartGame() {
+        playerDead = false;
+        paused = false;
+        player = new Player(WIDTH / 2, HEIGHT / 2, 40);  // Use correct radius 40, not 20
+        projectiles.clear();
+        enemies.clear();
+        enemyShots.clear();
+        rings.clear();
+        shards.clear();
+        smokes.clear();
+        blackHoles.clear();
+        spawnWave1();  // Respawn enemies on restart
+    }
+
+private void spawnPlayerExplosion(double x, double y, int radius) {
+    // large rings (reduced by half)
+    for (int i = 0; i < 2; i++) {
+        rings.add(new ParticleRing(x, y, radius + i * 12));
+    }
+    // many shards (reduced by half)
+    for (int i = 0; i < 30; i++) {
+        double ang = rng.nextDouble() * Math.PI * 2;
+        double spd = 2 + rng.nextDouble() * 6;
+        shards.add(new Shard(x, y, ang, spd, new Color(255, 220, 80)));
+    }
+    // heavy smoke (reduced by half)
+    for (int i = 0; i < 16; i++) {
+        double sx = x + (rng.nextDouble() - 0.5) * radius * 3;
+        double sy = y + (rng.nextDouble() - 0.5) * radius * 3;
+        smokes.add(new SmokeParticle(sx, sy));
+    }
+}
+
+private void drawGradientHealthBar(Graphics2D g2, int x, int y, int width, int height, double ratio, boolean isPlayer, double alpha) {
+    // Clamp ratio between 0 and 1
+    ratio = Math.max(0, Math.min(1, ratio));
+    alpha = Math.max(0, Math.min(1, alpha));
+    
+    // Clamp alpha to range 0-255 for color components
+    int alphaInt = (int)(alpha * 255);
+    
+    // Determine base glow color based on ratio
+    int r, g, b;
+    if (ratio <= 0.5) {
+        // Red to Yellow: 0.0 -> 0.5
+        float t = (float)(ratio * 2);  // 0.0 to 1.0
+        r = 255;
+        g = (int)(255 * t);
+        b = 0;
+    } else {
+        // Yellow to Green: 0.5 -> 1.0
+        float t = (float)((ratio - 0.5) * 2);  // 0.0 to 1.0
+        r = (int)(255 * (1 - t));
+        g = 255;
+        b = 0;
+    }
+    
+    // Draw glow effect (semi-transparent background layer)
+    g2.setColor(new Color(r, g, b, (int)(60 * alpha)));
+    g2.fillRect(x - 2, y - 2, width + 4, height + 4);
+    
+    // Draw dark background
+    g2.setColor(new Color(40, 40, 40, (int)(255 * alpha)));
+    g2.fillRect(x, y, width, height);
+    
+    // Calculate fill width
+    int fillWidth = (int)(width * ratio);
+    
+    // Draw filled portion with glow
+    if (fillWidth > 0) {
+        // Main bright bar
+        g2.setColor(new Color(r, g, b, alphaInt));
+        g2.fillRect(x, y, fillWidth, height);
+        
+        // Bright inner glow (edge highlight)
+        g2.setColor(new Color(Math.min(255, r + 50), Math.min(255, g + 50), b, (int)(180 * alpha)));
+        g2.fillRect(x, y, fillWidth, Math.max(1, height / 3));
+    }
+    
+    // Draw border
+    g2.setColor(new Color(200, 200, 200, (int)(200 * alpha)));
+    g2.setStroke(new BasicStroke(1.0f));
+    g2.drawRect(x, y, width, height);
 }
 }
