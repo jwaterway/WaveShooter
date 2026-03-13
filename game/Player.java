@@ -50,6 +50,22 @@ public class Player {
     // health meter (percentage 0–100)
     private double health = 100.0;
 
+    // Forcefield: remaining frames, stackable
+    private int forcefieldTimer = 0;  // frames remaining (60fps * seconds)
+
+    public boolean hasForcefield() { return forcefieldTimer > 0; }
+    public int getForcefieldTimer() { return forcefieldTimer; }
+    /** Add 10 seconds (600 frames) of forcefield. Stacks with existing time. */
+    public void addForcefield() { forcefieldTimer += 600; }
+    public void updateForcefield() { if (forcefieldTimer > 0) forcefieldTimer--; }
+
+    // Voltage: weapon boost level (0 = base, increments with pickups)
+    private int voltageLevel = 0;
+    public int getVoltageLevel() { return voltageLevel; }
+    public void addVoltage() { voltageLevel++; }
+    /** Max voltage level (maps 100ms → 20ms in 5 steps of 16ms). */
+    public static final int MAX_VOLTAGE = 5;
+
     public double getHealth() { return health; }
     public void takeDamage(double amt) {
         health -= amt;
@@ -479,8 +495,88 @@ public class Player {
         g2.setStroke(new BasicStroke(1.5f));
         g2.drawPolygon(electricalCone);
 
+        // === DRAW FORCEFIELD (electric hexagonal shield) ===
+        if (forcefieldTimer > 0) {
+            drawForcefield(g2);
+        }
+
         // Restore graphics state
         g2.rotate(-shipRotation);
         g2.translate(-drawX, -drawY);
+    }
+
+    private void drawForcefield(Graphics2D g2) {
+        // Save current transform — we are already translated+rotated into ship space.
+        // Forcefield should NOT rotate with the ship, so undo rotation.
+        g2.rotate(-shipRotation);
+
+        double t = System.nanoTime() / 100_000_000.0;
+        float shieldR = radius + 18;  // hugs the ship closely
+
+        // Fade-in / fade-out when timer is low
+        float baseAlpha = 1.0f;
+        if (forcefieldTimer < 120) baseAlpha = forcefieldTimer / 120.0f;  // fade out last 2 sec
+
+        // Outer electric glow
+        float pulse = 0.6f + 0.4f * (float)Math.sin(t * 3.0);
+        for (int i = 3; i >= 1; i--) {
+            float gr = shieldR + i * 4;
+            int a = (int)(50 * pulse * baseAlpha * (1.0 - i / 4.0));
+            g2.setColor(new Color(80, 200, 255, a));
+            g2.fillOval((int)(-gr), (int)(-gr), (int)(gr * 2), (int)(gr * 2));
+        }
+
+        // Hexagonal shield outline
+        int hexPoints = 6;
+        double hexWobble = 0.03 * Math.sin(t * 5.0);
+        Polygon hex = new Polygon();
+        for (int i = 0; i < hexPoints; i++) {
+            double angle = Math.PI / 6 + i * Math.PI / 3 + hexWobble;
+            double wobbleR = shieldR + 2 * Math.sin(t * 8.0 + i * 1.5);
+            hex.addPoint((int)(wobbleR * Math.cos(angle)), (int)(wobbleR * Math.sin(angle)));
+        }
+
+        // Fill with semi-transparent cyan
+        g2.setColor(new Color(60, 180, 255, (int)(30 * pulse * baseAlpha)));
+        g2.fillPolygon(hex);
+
+        // Bright hex outline
+        g2.setStroke(new BasicStroke(2.0f));
+        g2.setColor(new Color(100, 220, 255, (int)(180 * pulse * baseAlpha)));
+        g2.drawPolygon(hex);
+
+        // Electric arcs crawling along the hexagon edges
+        g2.setStroke(new BasicStroke(1.2f));
+        int[] xp = hex.xpoints;
+        int[] yp = hex.ypoints;
+        for (int i = 0; i < hexPoints; i++) {
+            int next = (i + 1) % hexPoints;
+            // Arc position crawls along edge
+            double crawl = (t * 2.0 + i * 1.1) % 1.0;
+            double arcX = xp[i] + (xp[next] - xp[i]) * crawl;
+            double arcY = yp[i] + (yp[next] - yp[i]) * crawl;
+            // Small forking lightning from arc point
+            for (int j = 0; j < 2; j++) {
+                double forkAngle = Math.random() * Math.PI * 2;
+                double forkLen = 4 + Math.random() * 8;
+                int fx = (int)(arcX + forkLen * Math.cos(forkAngle));
+                int fy = (int)(arcY + forkLen * Math.sin(forkAngle));
+                int a = (int)(200 * baseAlpha * (0.5 + 0.5 * Math.random()));
+                g2.setColor(new Color(180, 240, 255, a));
+                g2.drawLine((int)arcX, (int)arcY, fx, fy);
+            }
+        }
+
+        // Vertex sparks
+        for (int i = 0; i < hexPoints; i++) {
+            double sparkPulse = 0.5 + 0.5 * Math.sin(t * 6.0 + i * 2.0);
+            int sparkR = (int)(3 + 2 * sparkPulse);
+            int a = (int)(200 * sparkPulse * baseAlpha);
+            g2.setColor(new Color(200, 255, 255, a));
+            g2.fillOval(xp[i] - sparkR, yp[i] - sparkR, sparkR * 2, sparkR * 2);
+        }
+
+        // Restore the ship rotation for anything after
+        g2.rotate(shipRotation);
     }
 }

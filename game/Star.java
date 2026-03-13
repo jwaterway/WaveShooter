@@ -14,6 +14,9 @@ public class Star {
     BlackHole orbitTarget = null;
     private double twinklePhase;
     private double twinkleSpeed;
+    private double driftMultiplier = 1.0;
+
+    public void setDriftMultiplier(double m) { this.driftMultiplier = m; }
 
     public Star(int width, int height, double speed) {
         this.worldW = width;
@@ -70,7 +73,7 @@ public class Star {
         twinklePhase += twinkleSpeed;
 
         // Fixed drift: stars scroll downward at speed-based rate
-        double driftSpeed = 2.5;
+        double driftSpeed = 2.5 * driftMultiplier;
         y += speed * driftSpeed;
 
         // Wrap with margin
