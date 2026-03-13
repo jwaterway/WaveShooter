@@ -8,7 +8,8 @@ public class Main {
     public static void main(String[] args) {
     // diagnostics: working directory and Java version
     System.out.println("working dir=" + System.getProperty("user.dir"));
-    System.out.println("1java.version=" + System.getProperty("java.version") + " / vendor=" + System.getProperty("java.vendor"));
+    System.out.println("java.version=" + System.getProperty("java.version") + " / vendor=" + System.getProperty("java.vendor"));
+    System.out.println("java.library.path=" + System.getProperty("java.library.path"));
 
     	AudioManager.init();
     	AudioManager.playMusicLoop();
@@ -30,6 +31,8 @@ public class Main {
         System.out.println("panel size=" + gamePanel.getWidth() + "x" + gamePanel.getHeight());
         // confirm which classes/jar are loaded
         System.out.println("Main location=" + Main.class.getProtectionDomain().getCodeSource().getLocation());
+        System.out.flush();
         //gamePanel.startGameThread();
     }
 }
+

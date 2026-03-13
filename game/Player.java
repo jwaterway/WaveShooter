@@ -162,7 +162,7 @@ public class Player {
         
         // Ship rotation: constant spin + movement-based acceleration
         double movementSpeed = Math.sqrt(vx * vx + vy * vy);
-        double speedFactor = 1.0 + (movementSpeed / maxSpeed) * 15.0;  // up to 6x faster when moving
+        double speedFactor = 1.0 + (movementSpeed / maxSpeed) * 95.0;  // up to 6x faster when moving
         shipRotation += baseSpinSpeed * speedFactor;
         if (shipRotation >= 2 * Math.PI) {
             shipRotation -= 2 * Math.PI;
@@ -275,6 +275,20 @@ public class Player {
         int baseY2 = (int)Math.round(innerY + arrowWidth * Math.sin(gunAngle - Math.PI / 2));
 
         // === DRAW ELECTRICAL FLICKER FROM CENTER TO GUN TIP ===
+        // Core glow at center - electricity origin point
+        int coreRadius = 4;
+        float pulse = 0.7f + 0.3f * (float)Math.sin(System.nanoTime() / 80_000_000.0);
+        for (int r = coreRadius + 6; r > 0; r--) {
+            float t = (float)r / (coreRadius + 6);
+            int alpha = (int)(60 * pulse * (1 - t));
+            g2.setColor(new Color(140, 220, 255, alpha));
+            g2.fillOval(-r, -r, r * 2, r * 2);
+        }
+        g2.setColor(new Color(220, 240, 255, (int)(255 * pulse)));
+        g2.fillOval(-coreRadius, -coreRadius, coreRadius * 2, coreRadius * 2);
+        g2.setColor(new Color(255, 255, 255, (int)(200 * pulse)));
+        g2.fillOval(-2, -2, 4, 4);
+
         g2.setColor(new Color(100, 200, 255));
         g2.setStroke(new BasicStroke(1.0f));
         

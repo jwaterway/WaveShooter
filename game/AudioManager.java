@@ -5,42 +5,48 @@ import java.util.Map;
 
 public final class AudioManager {
     private static final Map<String, SoundPool> sfx = new HashMap<>();
+    private static final Map<String, Float> baseVolumes = new HashMap<>();
     private static final MusicPlayer music = new MusicPlayer();
 
     private static float masterVolume = 1.0f;
-    private static float sfxVolume = .15f;
+    private static float sfxVolume = .5f;
     private static float musicVolume = 0.5f;
 
     private AudioManager() {}
 
     public static void init() {
-        // register your sound effects here
-        loadSfx("shootTri", "/audio/shoot2.wav", 10);
-        loadSfx("shootSqr", "/audio/shoot4.wav", 10);
-        loadSfx("shootSin", "/audio/shoot6.wav", 10);
-        loadSfx("switchRay", "/audio/longshot2rev.wav", 10);
-        loadSfx("hitTri", "/audio/hit2.wav", 8);
-        loadSfx("hitSqr", "/audio/hit3.wav", 8);
-        loadSfx("hitSin", "/audio/hit1.wav", 8);
-        loadSfx("blackholehit", "/audio/warp5.wav", 18);
-        loadSfx("explosion", "/audio/explosion1.wav", 6);
-        loadSfx("pickup", "/audio/warp.wav", 4);
-
-        // load music here
-        //music.load("/audio/darkalientexture.wav");
+        // register your sound effects here (key, path, poolSize, baseVolume 0-1)
+        loadSfx("shootTri",     "/audio/shoot2.wav",       10, 0.6f);
+        loadSfx("shootSqr",     "/audio/shoot4.wav",       10, 0.6f);
+        loadSfx("shootSin",     "/audio/shoot6.wav",       10, 0.6f);
+        loadSfx("switchRay",    "/audio/raygun1.wav",      10, 0.5f);
+        loadSfx("hitTri",       "/audio/bottleclink2.wav",  8, 0.4f);
+        loadSfx("hitSqr",       "/audio/bottleclink3.wav",  8, 0.2f);
+        loadSfx("hitSin",       "/audio/bottleclink1.wav",  8, 0.1f);
+        loadSfx("blackholehit", "/audio/warp5.wav",        18, 0.4f);
+        loadSfx("explosion",    "/audio/explosion1.wav",    6, 0.5f);
+        loadSfx("glassbreak",   "/audio/glassbreak6.wav",   6, 0.9f);
+        loadSfx("pickup",       "/audio/warp.wav",          4, 0.5f);
+        loadSfx("enemyShoot",   "/audio/shoot3rev.wav",       10, 0.5f);
+        loadSfx("playerhit",    "/audio/explosion1.wav",    4, 0.6f);
 
         refreshVolumes();
     }
 
     public static void loadSfx(String key, String resourcePath, int poolSize) {
+        loadSfx(key, resourcePath, poolSize, 1.0f);
+    }
+
+    public static void loadSfx(String key, String resourcePath, int poolSize, float baseVol) {
         SoundPool old = sfx.remove(key);
         if (old != null) {
             old.close();
         }
 
+        baseVolumes.put(key, clamp(baseVol));
         SoundPool pool = new SoundPool(resourcePath, poolSize);
         sfx.put(key, pool);
-        pool.setVolume(masterVolume * sfxVolume);
+        pool.setVolume(masterVolume * sfxVolume * clamp(baseVol));
     }
 
     public static void playSfx(String key) {
@@ -120,11 +126,12 @@ public final class AudioManager {
     }
 
     private static void refreshVolumes() {
-        float sfxFinal = masterVolume * sfxVolume;
         float musicFinal = masterVolume * musicVolume;
 
-        for (SoundPool pool : sfx.values()) {
-            pool.setVolume(sfxFinal);
+        for (Map.Entry<String, SoundPool> entry : sfx.entrySet()) {
+            Float base = baseVolumes.get(entry.getKey());
+            float b = (base != null) ? base : 1.0f;
+            entry.getValue().setVolume(masterVolume * sfxVolume * b);
         }
 
         music.setVolume(musicFinal);

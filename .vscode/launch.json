@@ -9,7 +9,9 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "vmArgs": [
-          "-Dsun.java2d.uiScale=1.0"
+          "-Dsun.java2d.uiScale=1.0",
+          "-Djava.library.path=${workspaceFolder}\\lib\\natives",
+          "--enable-native-access=ALL-UNNAMED"
       ],
       "runtimeExecutable": "C:\\Program Files\\Java\\jdk-24\\bin\\java.exe"
     }

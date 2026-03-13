@@ -14,40 +14,33 @@ public class GamepadInput {
     
     public GamepadInput() {
         try {
-            System.out.println("[GamepadInput] Initializing...");
+            System.out.println("[GamepadInput] Java: " + System.getProperty("java.version") + " | OS: " + System.getProperty("os.name") + " " + System.getProperty("os.arch"));
+            System.out.println("[GamepadInput] Library path: " + System.getProperty("java.library.path"));
             
-            // Method 1: Try standard JInput detection
-            try {
-                System.out.println("[GamepadInput] Attempting JInput detection...");
-                Controller[] controllers = ControllerEnvironment.getDefaultEnvironment().getControllers();
-                System.out.println("[GamepadInput] Found " + controllers.length + " controller(s)");
-                
-                for (int i = 0; i < controllers.length; i++) {
-                    Controller controller = controllers[i];
-                    System.out.println("[GamepadInput] [" + i + "] " + controller.getName() + " (" + controller.getType() + ")");
-                    
-                    if (isGamepad(controller)) {
-                        this.gamepad = controller;
-                        this.available = true;
-                        System.out.println("[GamepadInput] ✓ Selected: " + controller.getName());
-                        return;
-                    }
+            Controller[] controllers = ControllerEnvironment.getDefaultEnvironment().getControllers();
+            System.out.println("[GamepadInput] Found " + controllers.length + " controller(s)");
+            
+            for (int i = 0; i < controllers.length; i++) {
+                System.out.println("[GamepadInput]   [" + i + "] " + controllers[i].getName() + " (" + controllers[i].getType() + ")");
+                if (isGamepad(controllers[i])) {
+                    this.gamepad = controllers[i];
+                    this.available = true;
+                    System.out.println("[GamepadInput] ✓ Using: " + gamepad.getName());
+                    dumpComponents();
+                    return;
                 }
-            } catch (UnsatisfiedLinkError e) {
-                System.out.println("[GamepadInput] JInput native libraries not available (expected): " + e.getClass().getSimpleName());
-                System.out.println("[GamepadInput] Will try alternative detection methods...");
             }
             
-            // Method 2: Try raw reflection-based detection of any available controllers
-            // This can work even without native libraries in some cases
-            tryAlternativeDetection();
-            
-            if (!available) {
-                System.out.println("[GamepadInput] ✗ No suitable gamepad found. Using keyboard/mouse only.");
-            }
-        } catch (Exception e) {
             this.available = false;
-            System.out.println("[GamepadInput] ✗ Initialization error: " + e.getMessage());
+            System.out.println("[GamepadInput] No suitable gamepad found. Keyboard/mouse only.");
+            
+        } catch (UnsatisfiedLinkError e) {
+            System.out.println("[GamepadInput] ERROR: Native DhookError - DLLs not loaded: " + e.getMessage());
+            this.available = false;
+        } catch (Exception e) {
+            System.out.println("[GamepadInput] Error: " + e.getMessage());
+            e.printStackTrace();
+            this.available = false;
         }
     }
     
@@ -151,12 +144,40 @@ public class GamepadInput {
         return false;
     }
 
+    private void dumpComponents() {
+        if (gamepad == null) return;
+        Component[] comps = gamepad.getComponents();
+        System.out.println("[GamepadInput] --- Component dump (" + comps.length + " components) ---");
+        for (int i = 0; i < comps.length; i++) {
+            Component c = comps[i];
+            System.out.println("[GamepadInput]   [" + i + "] name=\"" + c.getName() + "\" id=" + c.getIdentifier() + " analog=" + c.isAnalog());
+        }
+        System.out.println("[GamepadInput] --- End dump ---");
+    }
+
+    private int debugCounter = 0;
+
     /**
      * Poll gamepad state (must be called each frame)
      */
     public void poll() {
         if (available && gamepad != null) {
             gamepad.poll();
+            
+            // Print active inputs every 60 frames (once per second)
+            debugCounter++;
+            if (debugCounter % 60 == 0) {
+                StringBuilder sb = new StringBuilder();
+                for (Component c : gamepad.getComponents()) {
+                    float v = c.getPollData();
+                    if (Math.abs(v) > 0.01f) {
+                        sb.append(c.getName()).append("=").append(String.format("%.2f", v)).append(" ");
+                    }
+                }
+                if (sb.length() > 0) {
+                    System.out.println("[GamepadInput] Active: " + sb.toString().trim());
+                }
+            }
         }
     }
     
@@ -165,48 +186,61 @@ public class GamepadInput {
     }
     
     /**
-     * Get D-Pad horizontal input (-1.0 left, 0.0 center, 1.0 right)
+     * Get horizontal movement input (-1.0 left, 0.0 center, 1.0 right)
+     * Uses D-pad (Hat Switch) OR left stick, whichever is active.
+     * POV hat: 0.25=UP, 0.5=RIGHT, 0.75=DOWN, 1.0=LEFT, diagonals in between
      */
     public float getDPadX() {
         if (!available || gamepad == null) return 0.0f;
         
+        // Check D-pad (POV hat) first
         Component pov = gamepad.getComponent(Component.Identifier.Axis.POV);
         if (pov != null) {
-            float povValue = pov.getPollData();
-            // POV values: 0.0=center/none, 0.25=up, 0.5=right, 0.75=down
-            if (povValue >= 0.375f && povValue <= 0.625f) return 1.0f;   // right
-            if (povValue >= 0.875f || povValue <= 0.125f) return 0.0f;   // center/up
-            return -1.0f; // left
+            float v = pov.getPollData();
+            if (v != 0.0f) {
+                // Right component: UP_RIGHT(0.3125), RIGHT(0.5), DOWN_RIGHT(0.6875)
+                if (v > 0.25f && v < 0.75f) return 1.0f;
+                // Left component: DOWN_LEFT(0.8125), LEFT(1.0), UP_LEFT(0.125)
+                if (v > 0.75f || (v > 0.0f && v < 0.25f)) return -1.0f;
+                return 0.0f; // Pure UP or DOWN
+            }
         }
         
-        // Fallback to left stick if POV not available
+        // Also check left stick
         Component xAxis = gamepad.getComponent(Component.Identifier.Axis.X);
         if (xAxis != null) {
             float value = xAxis.getPollData();
-            return Math.abs(value) > 0.5f ? Math.signum(value) : 0.0f;
+            if (Math.abs(value) > 0.2f) return value; // deadzone 0.2
         }
         return 0.0f;
     }
 
     /**
-     * Get D-Pad vertical input (-1.0 down, 0.0 center, 1.0 up)
+     * Get vertical movement input (-1.0 up, 0.0 center, 1.0 down)
+     * Uses D-pad (Hat Switch) OR left stick, whichever is active.
+     * Returns SCREEN coordinates: negative=up, positive=down.
      */
     public float getDPadY() {
         if (!available || gamepad == null) return 0.0f;
         
+        // Check D-pad (POV hat) first
         Component pov = gamepad.getComponent(Component.Identifier.Axis.POV);
         if (pov != null) {
-            float povValue = pov.getPollData();
-            if (povValue >= 0.125f && povValue <= 0.375f) return 1.0f;   // up
-            if (povValue >= 0.625f && povValue <= 0.875f) return -1.0f;  // down
-            return 0.0f; // center/horizontal
+            float v = pov.getPollData();
+            if (v != 0.0f) {
+                // Up component: UP_LEFT(0.125), UP(0.25), UP_RIGHT(0.3125)
+                if (v > 0.0f && v < 0.5f) return -1.0f;  // screen up = negative
+                // Down component: DOWN_RIGHT(0.6875), DOWN(0.75), DOWN_LEFT(0.8125)
+                if (v > 0.5f && v < 1.0f) return 1.0f;    // screen down = positive
+                return 0.0f; // Pure LEFT or RIGHT
+            }
         }
         
-        // Fallback to left stick if POV not available
+        // Also check left stick (Y axis: negative=up in JInput)
         Component yAxis = gamepad.getComponent(Component.Identifier.Axis.Y);
         if (yAxis != null) {
             float value = yAxis.getPollData();
-            return Math.abs(value) > 0.5f ? -Math.signum(value) : 0.0f; // inverted
+            if (Math.abs(value) > 0.2f) return value; // deadzone 0.2, already screen-correct
         }
         return 0.0f;
     }
@@ -280,6 +314,34 @@ public class GamepadInput {
     }
 
     /**
+     * Get left trigger value (0.0 = released, 1.0 = fully pressed)
+     * Xbox 360 via JInput: Z axis negative = LT
+     */
+    public float getLeftTrigger() {
+        if (!available || gamepad == null) return 0.0f;
+        Component z = gamepad.getComponent(Component.Identifier.Axis.Z);
+        if (z != null) {
+            float value = z.getPollData();
+            return value < -0.1f ? -value : 0.0f;  // LT is negative Z, return as positive
+        }
+        return 0.0f;
+    }
+
+    /**
+     * Get right trigger value (0.0 = released, 1.0 = fully pressed)
+     * Xbox 360 via JInput: Z axis positive = RT
+     */
+    public float getRightTrigger() {
+        if (!available || gamepad == null) return 0.0f;
+        Component z = gamepad.getComponent(Component.Identifier.Axis.Z);
+        if (z != null) {
+            float value = z.getPollData();
+            return value > 0.1f ? value : 0.0f;  // RT is positive Z
+        }
+        return 0.0f;
+    }
+
+    /**
      * Check if left shoulder (LB) is pressed
      */
     public boolean isLBPressed() {
@@ -297,6 +359,26 @@ public class GamepadInput {
         
         Component rb = gamepad.getComponent(Component.Identifier.Button._5);
         return rb != null && rb.getPollData() == 1.0f;
+    }
+
+    /**
+     * Check if Start button is pressed (pause)
+     */
+    public boolean isStartPressed() {
+        if (!available || gamepad == null) return false;
+        
+        Component start = gamepad.getComponent(Component.Identifier.Button._7);
+        return start != null && start.getPollData() == 1.0f;
+    }
+
+    /**
+     * Check if Back/Select button is pressed (quit)
+     */
+    public boolean isBackPressed() {
+        if (!available || gamepad == null) return false;
+        
+        Component back = gamepad.getComponent(Component.Identifier.Button._6);
+        return back != null && back.getPollData() == 1.0f;
     }
 
     /**

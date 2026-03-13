@@ -43,7 +43,7 @@ public class Projectile {
         this.offsetAmt = offsetAmt;
         this.gunType = gun;
 
-        this.speed = 8.0;
+        this.speed = 12.0;
         this.dx = speed * Math.cos(angle);
         this.dy = speed * Math.sin(angle);
 

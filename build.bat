@@ -34,7 +34,9 @@ if exist audio xcopy audio bin\audio /E /I /Y >nul
 :: compile sources (use JAVA_HOME javac if defined, otherwise whatever is on PATH)
 :: Build javac classpath: include JInput JAR if available
 set "JAVAC_CP=."
-if exist "lib\jinput-2.0.10.jar" (
+if exist "lib\jinput-2.0.7.jar" (
+    set "JAVAC_CP=.;lib\jinput-2.0.7.jar;lib\jutils-1.0.0.jar"
+) else if exist "lib\jinput-2.0.10.jar" (
     set "JAVAC_CP=.;lib\jinput-2.0.10.jar"
 ) else if exist "lib\jinput.jar" (
     set "JAVAC_CP=.;lib\jinput.jar"
@@ -52,20 +54,25 @@ if errorlevel 1 (
 
 :: Build classpath: include JInput JAR if available
 set "CLASSPATH=bin"
-if exist "lib\jinput-2.0.10.jar" (
-    echo JInput library found - gamepad support enabled
+set "LIBRARY_PATH=."
+
+REM Resolve absolute path to native DLLs
+if exist "lib\natives" for /f "delims=" %%i in ('cd lib\natives ^& cd') do set "LIBRARY_PATH=%%i"
+
+REM Add JInput JAR to classpath
+if exist "lib\jinput-2.0.7.jar" (
+    echo JInput 2.0.7 with native support found - gamepad support enabled
+    set "CLASSPATH=bin;lib\jinput-2.0.7.jar;lib\jutils-1.0.0.jar"
+) else if exist "lib\jinput-2.0.10.jar" (
+    echo JInput 2.0.10 found
     set "CLASSPATH=bin;lib\jinput-2.0.10.jar"
 ) else if exist "lib\jinput.jar" (
     echo JInput library found - gamepad support enabled
     set "CLASSPATH=bin;lib\jinput.jar"
-) else if exist "lib\jamepad*.jar" (
-    echo Jamepad library found
-    for /f "delims=" %%j in ('dir /b "lib\jamepad*.jar" 2^>nul') do (
-        set "CLASSPATH=bin;lib\%%j"
-    )
 ) else (
-    echo JInput/Jamepad library not found - gamepad disabled (keyboard/mouse still work)
+    echo JInput library not found - gamepad disabled
 )
 
-:: run the game with the selected JVM
-"%JAVACMD%" -cp "%CLASSPATH%" game.Main
+:: run the game with the selected JVM (include absolute native library path for gamepad support)
+echo Using library path: %LIBRARY_PATH%
+"%JAVACMD%" --enable-native-access=ALL-UNNAMED -Djava.library.path="%LIBRARY_PATH%" -cp "%CLASSPATH%" game.Main
