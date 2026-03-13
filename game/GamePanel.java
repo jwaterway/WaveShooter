@@ -60,7 +60,9 @@ public class GamePanel extends JPanel implements KeyListener {
 
     // Input
     boolean upPressed, downPressed, leftPressed, rightPressed, nPressed, bPressed, cPressed, controlPressed, plusPressed, minusPressed;
-  
+    
+    // Gamepad support (graceful fallback if JAR unavailable)
+    GamepadInput gamepadInput;
     public GamePanel() {
     	this.setPreferredSize(new Dimension(WIDTH, HEIGHT));
         this.setBackground(Color.BLACK);
@@ -91,6 +93,11 @@ public class GamePanel extends JPanel implements KeyListener {
             bh.update(WIDTH, HEIGHT);
         }
         
+        // Initialize gamepad input (gracefully handles missing JAR)
+        gamepadInput = new GamepadInput();
+        if (gamepadInput.isAvailable()) {
+            System.out.println("Gamepad support initialized");
+        }
 
         // Mouse follows movement
         addMouseMotionListener(new MouseMotionAdapter() {
@@ -144,6 +151,26 @@ public class GamePanel extends JPanel implements KeyListener {
     	}
     	lastFrameTime = now;
     	
+    	
+    	// Poll gamepad input (if available) and merge with keyboard
+    	if (gamepadInput != null && gamepadInput.isAvailable()) {
+    	    gamepadInput.poll();  // Update gamepad state each frame
+    	    
+    	    if (gamepadInput.getDPadY() < 0) upPressed = true;      // D-Pad UP
+    	    if (gamepadInput.getDPadY() > 0) downPressed = true;    // D-Pad DOWN
+    	    if (gamepadInput.getDPadX() < 0) leftPressed = true;    // D-Pad LEFT
+    	    if (gamepadInput.getDPadX() > 0) rightPressed = true;   // D-Pad RIGHT
+    	    
+    	    if (gamepadInput.isAPressed()) mouseDown = true;       // A button = fire
+    	    if (gamepadInput.isBPressed()) controlPressed = true;  // B button = weapon switch
+    	    
+    	    // Right stick for aiming (optional enhancement)
+    	    float rsX = gamepadInput.getRightStickX();
+    	    float rsY = gamepadInput.getRightStickY();
+    	    if (Math.abs(rsX) > 0.1 || Math.abs(rsY) > 0.1) {
+    	        player.angle = Math.toDegrees(Math.atan2(rsY, rsX));
+    	    }
+    	}
     	
     	double vx = 0, vy = 0, dx = 0, dy = 0;
     	if (upPressed)   { vy -= 2; dy = -2; }
@@ -639,7 +666,7 @@ public class GamePanel extends JPanel implements KeyListener {
                 if (timeSinceHit < 1500) {  // Show for 1.5 seconds with fade
                     double healthRatio = e.getHealth() / e.getMaxHealth();  // Accurate health ratio
                     // Calculate fade alpha: full opacity for first 500ms, then fade to 0 by 1500ms
-                    double fadeAlpha = Math.max(0, 1.0 - (timeSinceHit - 500.0) / 1000.0);
+                    double fadeAlpha = Math.max(0, Math.min(1.0, 1.0 - (timeSinceHit - 500.0) / 1000.0));
                     drawGradientHealthBar(g2, (int)e.getX() - 12, (int)e.getY() - 30, 24, 4, healthRatio, false, fadeAlpha);
                 }
             }
