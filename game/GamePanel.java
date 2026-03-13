@@ -26,6 +26,10 @@ public class GamePanel extends JPanel implements KeyListener {
 	ArrayList<EnemyShot> enemyShots = new ArrayList<>();
 	ArrayList<Shard> shards = new ArrayList<>();
 	ArrayList<PowerUp> powerUps = new ArrayList<>();
+	ArrayList<HomingMissile> missiles = new ArrayList<>();
+	ArrayList<Asteroid> asteroids = new ArrayList<>();
+	ArrayList<Nebula> nebulae = new ArrayList<>();
+	BossEnemy boss = null;
 	ArrayList<SmokeParticle> smokes = new ArrayList<>();
 	double waveT = 0;
 	boolean wave1Active = false;
@@ -82,6 +86,8 @@ public class GamePanel extends JPanel implements KeyListener {
     // Volume slider state
     private boolean draggingSfxSlider = false;
     private boolean draggingMusicSlider = false;
+    // Engine sound
+    private EngineSound engineSound = new EngineSound();
     private static final int SL_TRACK_X = WIDTH - 280 - 30 + 55;
     private static final int SL_TRACK_W = 225;
     private static final int SL_SFX_Y = 52 + 22 + 38;
@@ -110,6 +116,7 @@ public class GamePanel extends JPanel implements KeyListener {
         // generate stars
   
         player = new Player(WIDTH / 2, HEIGHT / 2, 40);
+        engineSound.start();
         spawnWave(waveNumber);
         for (int i = 0; i < NUMBEROFSTARS; i++) {  // number of stars
             stars.add(new Star(WIDTH, HEIGHT, Math.random()+.2)); 
@@ -121,7 +128,6 @@ public class GamePanel extends JPanel implements KeyListener {
         // Initialize gamepad input (gracefully handles missing JAR)
         gamepadInput = new GamepadInput();
         if (gamepadInput.isAvailable()) {
-            System.out.println("Gamepad support initialized");
         }
 
         // Mouse follows movement
@@ -198,8 +204,8 @@ public class GamePanel extends JPanel implements KeyListener {
     	}
     	lastFrameTime = now;
 
-    	// Record FPS sample into rolling buffer
-    	double instantFps = (frameMs > 0) ? 1000.0 / frameMs : 0;
+    	// Record FPS sample into rolling buffer (clamp to sane range)
+    	double instantFps = (frameMs > 1) ? 1000.0 / frameMs : fpsAvg2s;
     	fpsHistory[fpsHistoryIdx] = instantFps;
     	fpsHistoryIdx = (fpsHistoryIdx + 1) % fpsHistory.length;
     	if (fpsHistoryCount < fpsHistory.length) fpsHistoryCount++;
@@ -207,9 +213,8 @@ public class GamePanel extends JPanel implements KeyListener {
     	fpsStatsTimer += frameMs;
     	if (fpsStatsTimer >= 200) {
     	    fpsStatsTimer = 0;
-    	    // Only look back 2 seconds worth of frames
-    	    int lookback = Math.min(fpsHistoryCount, (int)(2000.0 / Math.max(1, frameMs)));
-    	    if (lookback < 2) lookback = fpsHistoryCount;
+    	    // Fixed lookback: ~2 seconds of frames at 60fps
+    	    int lookback = Math.min(fpsHistoryCount, 120);
     	    double sum = 0, min = Double.MAX_VALUE;
     	    for (int i = 0; i < lookback; i++) {
     	        int idx = (fpsHistoryIdx - 1 - i + fpsHistory.length) % fpsHistory.length;
@@ -218,7 +223,8 @@ public class GamePanel extends JPanel implements KeyListener {
     	        if (v < min) min = v;
     	    }
     	    fpsAvg2s = sum / lookback;
-    	    fpsMin2s = min;
+    	    // Min only decreases — sticks at the lowest seen
+    	    if (min < fpsMin2s) fpsMin2s = min;
     	}
     	
     	// Poll gamepad BEFORE pause/dead checks so Start always works
@@ -291,13 +297,17 @@ public class GamePanel extends JPanel implements KeyListener {
     	    player.spinAngle -= Math.PI * 2; // keep it bounded
     	}
     	for (Star s : new ArrayList<>(stars)) {
-    	    s.update(WIDTH, HEIGHT, vx, vy, player.getAngle());
+    	    s.update(WIDTH, HEIGHT);
     	    s.updateWithBlackHoles(blackHoles);
     	}
     	if (nPressed) player.angle += 1; // speed to taste
     	if (bPressed) player.angle -= 1;
     	player.updateMovement(up, down, left, right);
         player.update(); // for spin
+        player.fireFlash *= 0.9;  // decay firing flash
+        if (player.fireFlash < 0.01) player.fireFlash = 0;
+        engineSound.setSpeedRatio(player.getSpeed() / player.maxSpeed);
+        engineSound.setVolume(AudioManager.getMasterVolume() * AudioManager.getSfxVolume() * 0.8f);
        /* for (int i = 0; i < projectiles.size(); i++) {
             Projectile p = projectiles.get(i);
             p.update();
@@ -350,6 +360,76 @@ public class GamePanel extends JPanel implements KeyListener {
         for (BlackHole bh : blackHoles) {
             bh.update(WIDTH, HEIGHT);
         }
+
+        // Update asteroids
+        for (int i = asteroids.size() - 1; i >= 0; i--) {
+            asteroids.get(i).update(WIDTH, HEIGHT);
+            if (!asteroids.get(i).isAlive()) asteroids.remove(i);
+        }
+
+        // Update nebulae
+        for (int i = nebulae.size() - 1; i >= 0; i--) {
+            nebulae.get(i).update(WIDTH, HEIGHT);
+            if (!nebulae.get(i).isAlive()) nebulae.remove(i);
+        }
+
+        // Player slowdown inside nebula
+        boolean inNebula = false;
+        for (Nebula n : nebulae) {
+            if (n.contains(player.getX(), player.getY())) {
+                inNebula = true;
+                break;
+            }
+        }
+        player.setSpeedMultiplier(inNebula ? 0.6 : 1.0);
+     // --- PROJECTILE ↔ ASTEROID COLLISIONS ---
+        for (int i = projectiles.size() - 1; i >= 0; i--) {
+            Projectile p = projectiles.get(i);
+            if (!p.isAlive()) continue;
+            for (int j = asteroids.size() - 1; j >= 0; j--) {
+                Asteroid a = asteroids.get(j);
+                double adx = p.getX() - a.getX();
+                double ady = p.getY() - a.getY();
+                double aHitR = p.getRadius() + a.getRadius();
+                if (adx * adx + ady * ady <= aHitR * aHitR) {
+                    a.kill();
+                    p.kill();
+                    player.score += 25;
+                    AudioManager.playSfx("explosion");
+                    rings.add(new ParticleRing(a.getX(), a.getY(), a.getRadius()));
+                    // Spawn debris shards
+                    for (int k = 0; k < 5; k++) {
+                        double ang = rng.nextDouble() * Math.PI * 2;
+                        double spd = 1.5 + rng.nextDouble() * 2.5;
+                        shards.add(new Shard(a.getX(), a.getY(), ang, spd, new Color(140, 120, 90)));
+                    }
+                    // Split into smaller asteroids
+                    asteroids.addAll(a.split());
+                    break;
+                }
+            }
+        }
+
+        // --- PLAYER ↔ ASTEROID COLLISIONS ---
+        for (int i = asteroids.size() - 1; i >= 0; i--) {
+            Asteroid a = asteroids.get(i);
+            double adx = player.getX() - a.getX();
+            double ady = player.getY() - a.getY();
+            double aHitR = player.radius + a.getRadius();
+            if (adx * adx + ady * ady <= aHitR * aHitR) {
+                player.takeDamage(15.0);
+                player.applyKnockback(adx, ady, 6.0);
+                AudioManager.playSfx("playerhit");
+                rings.add(new ParticleRing(a.getX(), a.getY(), a.getRadius()));
+                for (int k = 0; k < 4; k++) {
+                    double ang = rng.nextDouble() * Math.PI * 2;
+                    shards.add(new Shard(a.getX(), a.getY(), ang, 2.0, new Color(140, 120, 90), 1));
+                }
+                a.kill();
+                asteroids.addAll(a.split());
+            }
+        }
+
      // --- PROJECTILE ↔ BLACK HOLE COLLISIONS ---
         for (int i = projectiles.size() - 1; i >= 0; i--) {
             Projectile p = projectiles.get(i);
@@ -472,7 +552,7 @@ public class GamePanel extends JPanel implements KeyListener {
                 double enemyT = waveT - e.getPathOffset();
                 if (enemyT >= 0) {
                 	Point p = EnemyPaths.getPath(e.getWaveType(), enemyT, WIDTH);
-                    e.setPosition(p.x, p.y);
+                    e.setPosition(p.x, p.y + e.getRowYOffset());
                     // Kill enemies that have completed enough cycles (escaped off-screen)
                     if (enemyT > 260 * 8) {  // ~8 passes across the screen
                         e.takeDamage(e.getHealth());
@@ -552,10 +632,93 @@ public class GamePanel extends JPanel implements KeyListener {
             }
         }
 
-        // Wave progression: if all enemies dead, spawn next wave
+        // Update power-ups and check collection
+        for (int i = powerUps.size() - 1; i >= 0; i--) {
+            PowerUp pu = powerUps.get(i);
+            pu.update();
+            if (!pu.isAlive()) { powerUps.remove(i); continue; }
+            double dxPU = player.getX() - pu.getX();
+            double dyPU = player.getY() - pu.getY();
+            if (dxPU * dxPU + dyPU * dyPU <= (player.radius + 18) * (player.radius + 18)) {
+                AudioManager.playSfx(pu.getSoundKey(), 0.8f);
+                // Apply effect
+                if (pu.getType() == PowerUp.Type.HEALTH) {
+                    player.heal(25.0);
+                }
+                rings.add(new ParticleRing(pu.getX(), pu.getY(), 16));
+                powerUps.remove(i);
+            }
+        }
+
+        // Update boss
+        if (boss != null && boss.isAlive()) {
+            boss.update(player.getX(), player.getY(), missiles);
+        }
+
+        // Update homing missiles and check player collision
+        for (int i = missiles.size() - 1; i >= 0; i--) {
+            HomingMissile m = missiles.get(i);
+            m.update(player.getX(), player.getY());
+            if (!m.isAlive()) {
+                // Spawn explosion if missile expired naturally (fizzed out)
+                if (m.hasExpired()) {
+                    rings.add(new ParticleRing(m.getX(), m.getY(), 18));
+                    rings.add(new ParticleRing(m.getX(), m.getY(), 10));
+                    for (int sp = 0; sp < 10; sp++) {
+                        double sparkAngle = (sp / 10.0) * 2 * Math.PI + Math.random() * 0.3;
+                        double spd = 2 + Math.random() * 4;
+                        shards.add(new Shard(m.getX(), m.getY(), sparkAngle, spd, new Color(255, 160, 40), 1));
+                    }
+                    for (int sp = 0; sp < 3; sp++) {
+                        double sx = m.getX() + (Math.random() - 0.5) * 16;
+                        double sy = m.getY() + (Math.random() - 0.5) * 16;
+                        smokes.add(new SmokeParticle(sx, sy));
+                    }
+                    AudioManager.playSfx("explosion");
+                }
+                missiles.remove(i); continue;
+            }
+            double dxM = player.getX() - m.getX();
+            double dyM = player.getY() - m.getY();
+            double hitRM = player.radius + HomingMissile.RADIUS;
+            if (dxM * dxM + dyM * dyM <= hitRM * hitRM) {
+                player.takeDamage(40.0);
+                player.applyKnockback(dxM, dyM, 8.0);
+                AudioManager.playSfx("playerhit");
+                rings.add(new ParticleRing(m.getX(), m.getY(), 14));
+                for (int sp = 0; sp < 6; sp++) {
+                    double sparkAngle = (sp / 6.0) * 2 * Math.PI;
+                    shards.add(new Shard(m.getX(), m.getY(), sparkAngle, 5.0, new Color(255, 140, 50), 1));
+                }
+                missiles.remove(i);
+            }
+        }
+
+        // Projectile vs boss collision
+        if (boss != null && boss.isAlive()) {
+            for (int i = projectiles.size() - 1; i >= 0; i--) {
+                Projectile p = projectiles.get(i);
+                if (!p.isAlive()) continue;
+                double dxB = p.getX() - boss.getX();
+                double dyB = p.getY() - boss.getY();
+                double hitRB = p.getRadius() + boss.getRadius();
+                if (dxB * dxB + dyB * dyB <= hitRB * hitRB) {
+                    double dmg = getProjectileDamage(p);
+                    boss.takeDamage(dmg);
+                    rings.add(new ParticleRing(p.getX(), p.getY(), 8));
+                    p.kill();
+                    if (!boss.isAlive()) {
+                        spawnBossExplosion(boss.getX(), boss.getY(), boss.getRadius());
+                    }
+                }
+            }
+        }
+
+        // Wave progression: if all enemies dead (and boss dead/absent), spawn next wave
         boolean anyAlive = false;
         for (Enemy e : enemies) { if (e.isAlive()) { anyAlive = true; break; } }
-        if (!anyAlive && !playerDead && enemies.size() > 0) {
+        boolean bossAlive = (boss != null && boss.isAlive());
+        if (!anyAlive && !bossAlive && !playerDead && enemies.size() > 0) {
             waveNumber++;
             spawnWave(waveNumber);
         }
@@ -568,11 +731,11 @@ public class GamePanel extends JPanel implements KeyListener {
             enemyShots.clear();
             enemies.clear();
             projectiles.clear();
+            missiles.clear();
             AudioManager.playSfx("explosion", 1.0f);
             AudioManager.playSfx("glassbreak", 1.0f);
+            engineSound.setSpeedRatio(0);
         }
-        
-        // update rings and cull dead ones
         for (int i = rings.size() - 1; i >= 0; i--) {
             ParticleRing r = rings.get(i);
             r.update();
@@ -651,6 +814,7 @@ public class GamePanel extends JPanel implements KeyListener {
     private void tryFire() {
         long nowNs = System.nanoTime();
         if ((nowNs - lastFireNs) / 1_000_000 >= fireIntervalMs) {
+            player.fireFlash = 1.0;
         	double rad = Math.toRadians(player.getAngle());
         	double spawnOffset = 36.0;
 
@@ -676,6 +840,7 @@ public class GamePanel extends JPanel implements KeyListener {
     }
     private void spawnWave(int wave) {
         enemies.clear();
+        missiles.clear();
         waveT = 0;
         wave1Active = true;
 
@@ -693,10 +858,55 @@ public class GamePanel extends JPanel implements KeyListener {
             default: rows = 2; cols = 5;  pathType = 1; break;
         }
 
+        double maxOffset = 0;
         for (int i = 0; i < cols; i++) {
             for (int j = 0; j < rows; j++) {
-                double offset = (j * 260) + (i * 20);
-                enemies.add(new Enemy(WIDTH + 100, 120, radius, health, offset, pathType));
+                double offset = (i * 50);
+                if (offset > maxOffset) maxOffset = offset;
+                Enemy e = new Enemy(WIDTH + 100, 120, radius, health, offset, pathType);
+                e.setRowYOffset(j * 160); // permanent vertical separation per row
+                enemies.add(e);
+            }
+        }
+
+        // Spawn boss behind the formation (from wave 2 onwards)
+        if (wave >= 2) {
+            double bossHealth = 50.0 + wave * 10.0;
+            boss = new BossEnemy(WIDTH / 2.0, -200, bossHealth);
+            boss.setTargetPosition(WIDTH / 2.0, 140);
+        } else {
+            boss = null;
+        }
+
+        // Spawn asteroids (increasing with waves)
+        int asteroidCount = Math.min(3 + wave * 2, 14);
+        for (int i = 0; i < asteroidCount; i++) {
+            int side = rng.nextInt(4); // 0=top, 1=bottom, 2=left, 3=right
+            double ax, ay, avx, avy;
+            int aRadius = 20 + rng.nextInt(25);
+            switch (side) {
+                case 0:  ax = rng.nextInt(WIDTH); ay = -80; avx = (rng.nextDouble()-0.5)*1.5; avy = 0.3+rng.nextDouble()*0.6; break;
+                case 1:  ax = rng.nextInt(WIDTH); ay = HEIGHT+80; avx = (rng.nextDouble()-0.5)*1.5; avy = -(0.3+rng.nextDouble()*0.6); break;
+                case 2:  ax = -80; ay = rng.nextInt(HEIGHT); avx = 0.3+rng.nextDouble()*0.6; avy = (rng.nextDouble()-0.5)*1.5; break;
+                default: ax = WIDTH+80; ay = rng.nextInt(HEIGHT); avx = -(0.3+rng.nextDouble()*0.6); avy = (rng.nextDouble()-0.5)*1.5; break;
+            }
+            asteroids.add(new Asteroid(ax, ay, aRadius, avx, avy));
+        }
+
+        // Spawn nebula clouds (from wave 2, max 2 per wave)
+        if (wave >= 2) {
+            int nebulaCount = Math.min(1 + wave / 2, 3);
+            for (int i = 0; i < nebulaCount; i++) {
+                int nRadius = 120 + rng.nextInt(100);
+                int side = rng.nextInt(4);
+                double nx, ny, nvx, nvy;
+                switch (side) {
+                    case 0:  nx = rng.nextInt(WIDTH); ny = -nRadius*2; nvx = (rng.nextDouble()-0.5)*0.4; nvy = 0.15+rng.nextDouble()*0.2; break;
+                    case 1:  nx = rng.nextInt(WIDTH); ny = HEIGHT+nRadius*2; nvx = (rng.nextDouble()-0.5)*0.4; nvy = -(0.15+rng.nextDouble()*0.2); break;
+                    case 2:  nx = -nRadius*2; ny = rng.nextInt(HEIGHT); nvx = 0.15+rng.nextDouble()*0.2; nvy = (rng.nextDouble()-0.5)*0.4; break;
+                    default: nx = WIDTH+nRadius*2; ny = rng.nextInt(HEIGHT); nvx = -(0.15+rng.nextDouble()*0.2); nvy = (rng.nextDouble()-0.5)*0.4; break;
+                }
+                nebulae.add(new Nebula(nx, ny, nRadius, nvx, nvy));
             }
         }
     }
@@ -755,9 +965,24 @@ public class GamePanel extends JPanel implements KeyListener {
         final ArrayList<Shard> shardsSnap       = new ArrayList<>(shards);
         final ArrayList<SmokeParticle> smokesSnap = new ArrayList<>(smokes);
         final ArrayList<EnemyShot> enemyShotsSnap = new ArrayList<>(enemyShots);
+        final ArrayList<PowerUp> powerUpsSnap = new ArrayList<>(powerUps);
+        final ArrayList<HomingMissile> missilesSnap = new ArrayList<>(missiles);
+        final ArrayList<Asteroid> asteroidsSnap = new ArrayList<>(asteroids);
+        final ArrayList<Nebula> nebulaeSnap = new ArrayList<>(nebulae);
+        final BossEnemy bossSnap = boss;
+
+        // Draw nebulae behind everything (atmospheric background layer)
+        for (Nebula n : nebulaeSnap) {
+            n.draw(g2);
+        }
 
         for (Star s : starsSnap) {
             s.draw(g2, holesSnap);
+        }
+
+        // Draw asteroids
+        for (Asteroid a : asteroidsSnap) {
+            a.draw(g2);
         }
 
         // Draw player only if alive
@@ -802,6 +1027,28 @@ public class GamePanel extends JPanel implements KeyListener {
                     drawGradientHealthBar(g2, (int)e.getX() - 12, (int)e.getY() - 30, 24, 4, healthRatio, false, fadeAlpha);
                 }
             }
+        }
+
+        // Draw power-ups
+        for (PowerUp pu : powerUpsSnap) {
+            if (pu.isAlive()) pu.draw(g2);
+        }
+
+        // Draw boss
+        if (bossSnap != null && bossSnap.isAlive()) {
+            bossSnap.draw(g2);
+            // Boss health bar
+            long timeSinceHit = System.currentTimeMillis() - bossSnap.getLastHitTime();
+            if (timeSinceHit < 3000) {
+                double bossRatio = bossSnap.getHealth() / bossSnap.getMaxHealth();
+                double fadeAlpha = Math.max(0, Math.min(1.0, 1.0 - (timeSinceHit - 1500.0) / 1500.0));
+                drawGradientHealthBar(g2, (int)bossSnap.getX() - 60, (int)bossSnap.getY() - bossSnap.getRadius() - 20, 120, 8, bossRatio, false, fadeAlpha);
+            }
+        }
+
+        // Draw homing missiles
+        for (HomingMissile m : missilesSnap) {
+            if (m.isAlive()) m.draw(g2);
         }
 
         // ========== HUD TICK ==========
@@ -996,6 +1243,12 @@ private void spawnEnemyExplosion(double x, double y, int radius, Player.GunType 
     player.score = player.score + 50;
     AudioManager.playSfx("explosion");
     AudioManager.playSfx("glassbreak");
+    // 1/5 chance to drop a power-up
+    if (rng.nextInt(5) == 0) {
+        PowerUp.Type[] types = PowerUp.Type.values();
+        PowerUp.Type type = types[rng.nextInt(types.length)];
+        powerUps.add(new PowerUp(x, y, type));
+    }
     // shards flying out (reduced by half)
     for (int i = 0; i < 4; i++) {
         double ang = rng.nextDouble() * Math.PI * 2;
@@ -1023,6 +1276,8 @@ private void restartGame() {
         waveNumber = 1;
         displayScore = 0;
         lastScoreChangeTime = 0;
+        fpsMin2s = 999;
+        fpsHistoryCount = 0;
         player = new Player(WIDTH / 2, HEIGHT / 2, 40);
         projectiles.clear();
         enemies.clear();
@@ -1031,6 +1286,11 @@ private void restartGame() {
         shards.clear();
         smokes.clear();
         blackHoles.clear();
+        powerUps.clear();
+        missiles.clear();
+        asteroids.clear();
+        nebulae.clear();
+        boss = null;
         spawnWave(waveNumber);
     }
 
@@ -1049,6 +1309,28 @@ private void spawnPlayerExplosion(double x, double y, int radius) {
     for (int i = 0; i < 16; i++) {
         double sx = x + (rng.nextDouble() - 0.5) * radius * 3;
         double sy = y + (rng.nextDouble() - 0.5) * radius * 3;
+        smokes.add(new SmokeParticle(sx, sy));
+    }
+}
+
+private void spawnBossExplosion(double x, double y, int radius) {
+    player.score += 500;
+    AudioManager.playSfx("explosion", 1.0f);
+    AudioManager.playSfx("glassbreak", 1.0f);
+    // Massive rings
+    for (int i = 0; i < 5; i++) {
+        rings.add(new ParticleRing(x, y, radius / 2 + i * 20));
+    }
+    // Tons of shards
+    for (int i = 0; i < 40; i++) {
+        double ang = rng.nextDouble() * Math.PI * 2;
+        double spd = 2 + rng.nextDouble() * 8;
+        shards.add(new Shard(x, y, ang, spd, new Color(180, 120, 255)));
+    }
+    // Heavy smoke
+    for (int i = 0; i < 12; i++) {
+        double sx = x + (rng.nextDouble() - 0.5) * radius * 2;
+        double sy = y + (rng.nextDouble() - 0.5) * radius * 2;
         smokes.add(new SmokeParticle(sx, sy));
     }
 }
@@ -1188,7 +1470,19 @@ private void drawFancyHealthBar(Graphics2D g2, int x, int y, int width, int heig
 
     g2.setFont(new Font("Arial", Font.BOLD, 14));
     g2.setColor(new Color(130, 170, 200, 200));
-    g2.drawString("HP", x - 28, y + height - 5);
+    g2.drawString("ENERGY", x, y - 6);
+
+    // Percentage text inside the bar
+    int pct = (int)Math.round(ratio * 100);
+    String pctStr = pct + "%";
+    g2.setFont(new Font("Arial", Font.BOLD, 13));
+    FontMetrics fm = g2.getFontMetrics();
+    int textX = x + (width - fm.stringWidth(pctStr)) / 2;
+    int textY = y + height - (height - fm.getAscent()) / 2 - 1;
+    g2.setColor(new Color(0, 0, 0, 140));
+    g2.drawString(pctStr, textX + 1, textY + 1);
+    g2.setColor(new Color(220, 240, 255, 220));
+    g2.drawString(pctStr, textX, textY);
 }
 
 private void drawVolumeSlider(Graphics2D g2, String label, int labelX, int y, int trackX, int trackW, int h, float value) {

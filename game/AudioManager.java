@@ -28,7 +28,14 @@ public final class AudioManager {
         loadSfx("glassbreak",   "/audio/glassbreak6.wav",   6, 0.9f);
         loadSfx("pickup",       "/audio/warp.wav",          4, 0.5f);
         loadSfx("enemyShoot",   "/audio/shoot3rev.wav",       10, 0.5f);
-        loadSfx("playerhit",    "/audio/explosion1.wav",    4, 0.6f);
+        loadSfx("playerhit",    "/audio/warp3.wav",    4, 0.8f);
+        loadSfx("powerup1",    "/audio/warp2.wav",         4, 0.6f);
+        loadSfx("powerup2",    "/audio/warp4.wav",         4, 0.6f);
+        loadSfx("powerup3",    "/audio/warp5.wav",         4, 0.6f);
+        loadSfx("powerup4",    "/audio/warp6.wav",         4, 0.6f);
+        loadSfx("powerup5",    "/audio/raygun2.wav",       4, 0.6f);
+        loadSfx("powerup6",    "/audio/raygun3.wav",       4, 0.6f);
+        loadSfx("homing",      "/audio/longshot3rev.wav",     6, 0.4f);
 
         refreshVolumes();
     }

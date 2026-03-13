@@ -14,6 +14,7 @@ public class Enemy {
     // how far behind the lead enemy this one is on the shared path
     private final double pathOffset;
     private int waveType = 1;  // which path pattern to follow
+    private double rowYOffset = 0; // permanent vertical offset per row
 
     // shooting state
     private int shotsFired = 0;
@@ -71,6 +72,9 @@ public class Enemy {
     public double getPathOffset() {
         return pathOffset;
     }
+
+    public double getRowYOffset() { return rowYOffset; }
+    public void setRowYOffset(double offset) { this.rowYOffset = offset; }
 
     public int getWaveType() { return waveType; }
 

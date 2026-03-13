@@ -1,6 +1,7 @@
 package game;
 
 import java.awt.*;
+import java.awt.geom.Point2D;
 import java.util.ArrayList;
 
 public class Star {
@@ -11,6 +12,8 @@ public class Star {
     boolean orbiting = false;
     double orbitAngle = 0;
     BlackHole orbitTarget = null;
+    private double twinklePhase;
+    private double twinkleSpeed;
 
     public Star(int width, int height, double speed) {
         this.worldW = width;
@@ -22,15 +25,24 @@ public class Star {
         this.speed = speed;
 
         // star size based on speed (closer = bigger/brighter)
-        this.size = (1 + speed * 2);
+        this.size = (0.5 + speed * 2.5);
 
-        switch ((int)(Math.random() * 9)) {
-            case 0: case 5: core = Color.CYAN;    glow = new Color(0, 255, 255, 120); break;
-            case 1: case 6: core = Color.MAGENTA; glow = new Color(255, 255, 135, 120); break;
-            case 2:         core = Color.YELLOW;  glow = new Color(255, 255, 100, 120); break;
-            case 3: case 7: case 8: /* fallthrough */ core = Color.WHITE; glow = new Color(255, 255, 255, 120); break;
-            case 4:         core = Color.PINK;    glow = new Color(255, 255, 255, 120); break;
-            default:        core = Color.GREEN;   glow = new Color(100, 255, 100, 120); break;
+        this.twinklePhase = Math.random() * Math.PI * 2;
+        this.twinkleSpeed = 0.03 + Math.random() * 0.08;
+
+        switch ((int)(Math.random() * 12)) {
+            case 0: case 5: case 9:
+                core = new Color(100, 200, 255);  glow = new Color(80, 180, 255, 100); break;  // cool blue
+            case 1: case 6:
+                core = new Color(255, 220, 180);  glow = new Color(255, 200, 150, 90); break;  // warm yellow
+            case 2: case 10:
+                core = Color.CYAN;    glow = new Color(0, 255, 255, 80); break;
+            case 3: case 7: case 8: case 11:
+                core = Color.WHITE;   glow = new Color(220, 230, 255, 100); break;
+            case 4:
+                core = new Color(255, 180, 200);  glow = new Color(255, 150, 180, 80); break;  // soft pink
+            default:
+                core = new Color(200, 220, 255);  glow = new Color(180, 200, 255, 90); break;  // pale blue
         }
     }
 
@@ -54,18 +66,12 @@ public class Star {
         this.orbiting = false;
         this.orbitTarget = null;
     }
-    public void update(int width, int height, double playerVX, double playerVY, double coneDeg) {
-        // Parallax: opposite player velocity + "draft" toward aim
-        x -= Math.round(playerVX * speed * 0.25);
-        y -= Math.round(playerVY * speed * 0.25);
+    public void update(int width, int height) {
+        twinklePhase += twinkleSpeed;
 
-        // draft: opposite of player aim (aim points arrow tip; stars drift "past" you)
-        double angleRad = Math.toRadians(coneDeg);
-        double dx = Math.cos(angleRad);
-        double dy = Math.sin(angleRad);
-        double draftStrength = 5;
-        x -= dx * speed * draftStrength;
-        y -= dy * speed * draftStrength;
+        // Fixed drift: stars scroll downward at speed-based rate
+        double driftSpeed = 2.5;
+        y += speed * driftSpeed;
 
         // Wrap with margin
         final int margin = 20;
@@ -147,22 +153,34 @@ public class Star {
             rx = tmp[0]; ry = tmp[1];
         }
 
-        // glow (bigger, semi-transparent)
-        g2.setColor(glow);
+        double twinkle = 0.6 + 0.4 * Math.sin(twinklePhase);
+        double drawSize = size * (0.8 + 0.2 * twinkle);
+
+        // Outer glow
+        int glowAlpha = (int)(glow.getAlpha() * twinkle);
+        g2.setColor(new Color(glow.getRed(), glow.getGreen(), glow.getBlue(), Math.max(0, Math.min(255, glowAlpha))));
+        int glowDiam = (int)Math.round(drawSize * 2.4);
         g2.fillOval(
-            (int)Math.round(rx - size),
-            (int)Math.round(ry - size),
-            (int)Math.round(size * 2),
-            (int)Math.round(size * 2)
+            (int)Math.round(rx - glowDiam / 2.0),
+            (int)Math.round(ry - glowDiam / 2.0),
+            glowDiam, glowDiam
         );
 
-        // core (smaller, solid)
-        g2.setColor(core);
-        int coreSize = (int)Math.max(1, Math.round(size * 0.6)); // renamed from 'core' to avoid shadowing
+        // Bright core
+        int coreAlpha = (int)(180 + 75 * twinkle);
+        g2.setColor(new Color(core.getRed(), core.getGreen(), core.getBlue(), Math.min(255, coreAlpha)));
+        int coreDiam = (int)Math.max(1, Math.round(drawSize * 0.7));
         g2.fillOval(
-            (int)Math.round(rx - coreSize / 2.0),
-            (int)Math.round(ry - coreSize / 2.0),
-            coreSize, coreSize
+            (int)Math.round(rx - coreDiam / 2.0),
+            (int)Math.round(ry - coreDiam / 2.0),
+            coreDiam, coreDiam
         );
+
+        // Tiny white hot center for larger stars
+        if (drawSize > 2.0) {
+            int hotAlpha = (int)(200 * twinkle);
+            g2.setColor(new Color(255, 255, 255, Math.min(255, hotAlpha)));
+            g2.fillOval((int)Math.round(rx), (int)Math.round(ry), 1, 1);
+        }
     }
 }

@@ -5,6 +5,8 @@ import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.BasicStroke;
+import java.awt.geom.Point2D;
+import java.awt.RadialGradientPaint;
 
 public class Player {
     double x, y;
@@ -27,6 +29,9 @@ public class Player {
 
     public double offsetAmt = 1.0;
 
+    // Firing flash intensity (1.0 when firing, decays to 0)
+    public double fireFlash = 0;
+
     double vx = 0, vy = 0;
     double ax = 0, ay = 0;
 
@@ -34,6 +39,9 @@ public class Player {
     double accel = 0.65;
     double friction = 0.95;
     double bounceFactor = 1.0; // 1.0 = same speed back, 0.8 = lose some speed
+    private double speedMultiplier = 1.0;
+
+    public void setSpeedMultiplier(double m) { this.speedMultiplier = m; }
 
     enum GunType { TRIANGLE, SQUARE, SINE }
     GunType currentGun = GunType.TRIANGLE;
@@ -63,6 +71,11 @@ public class Player {
             vx += (dx / mag) * strength;
             vy += (dy / mag) * strength;
         }
+    }
+
+    /** Current speed magnitude (0 .. maxSpeed). */
+    public double getSpeed() {
+        return Math.hypot(vx, vy);
     }
 
     public Player(double x, double y, int radius) {
@@ -123,9 +136,10 @@ public class Player {
         vy += ay;
 
         double speed = Math.sqrt(vx * vx + vy * vy);
-        if (speed > maxSpeed) {
-            vx = (vx / speed) * maxSpeed;
-            vy = (vy / speed) * maxSpeed;
+        double effectiveMax = maxSpeed * speedMultiplier;
+        if (speed > effectiveMax) {
+            vx = (vx / speed) * effectiveMax;
+            vy = (vy / speed) * effectiveMax;
         }
 
         vx *= friction;
@@ -232,27 +246,139 @@ public class Player {
         Polygon hull = new Polygon(xPoints, yPoints, numPoints);
         g2.fillPolygon(hull);
 
+        // === 3D HIGHLIGHT: bright edge on top-left of each lobe ===
+        for (int lobe = 0; lobe < 3; lobe++) {
+            double lobeAngle = (lobe / 3.0) * 2 * Math.PI;
+            double lobeCx = radius * 0.55 * Math.cos(lobeAngle);
+            double lobeCy = radius * 0.55 * Math.sin(lobeAngle);
+            int hlR = (int)(radius * 0.3);
+            RadialGradientPaint highlight = new RadialGradientPaint(
+                new Point2D.Double(lobeCx - hlR * 0.3, lobeCy - hlR * 0.3), hlR,
+                new float[]{0f, 0.5f, 1f},
+                new Color[]{
+                    new Color(255, 255, 255, 70),
+                    new Color(255, 255, 255, 25),
+                    new Color(255, 255, 255, 0)
+                }
+            );
+            g2.setPaint(highlight);
+            g2.fillOval((int)(lobeCx - hlR), (int)(lobeCy - hlR), hlR * 2, hlR * 2);
+        }
+
+        // === 3D SHADOW: darkened bottom-right edge ===
+        for (int lobe = 0; lobe < 3; lobe++) {
+            double lobeAngle = (lobe / 3.0) * 2 * Math.PI;
+            double lobeCx = radius * 0.55 * Math.cos(lobeAngle);
+            double lobeCy = radius * 0.55 * Math.sin(lobeAngle);
+            int shR = (int)(radius * 0.35);
+            RadialGradientPaint shadow = new RadialGradientPaint(
+                new Point2D.Double(lobeCx + shR * 0.3, lobeCy + shR * 0.3), shR,
+                new float[]{0f, 0.6f, 1f},
+                new Color[]{
+                    new Color(0, 0, 0, 50),
+                    new Color(0, 0, 0, 20),
+                    new Color(0, 0, 0, 0)
+                }
+            );
+            g2.setPaint(shadow);
+            g2.fillOval((int)(lobeCx - shR), (int)(lobeCy - shR), shR * 2, shR * 2);
+        }
+
         g2.setColor(outlineColor);
         g2.setStroke(new BasicStroke(1));
         g2.drawPolygon(hull);
 
-        // === DRAW BLINKING LIGHTS: Three red lights ===
-        double blinkIntensity = (Math.sin(lightBlinkTimer) + 1.0) / 2.0;  // 0 to 1
-        int lightBrightness = (int)(100 + blinkIntensity * 155);  // 100 to 255
-        Color lightColor = new Color(255, Math.max(0, lightBrightness - 150), Math.max(0, lightBrightness - 150));
+        // === BEVELED EDGE: bright inner rim highlight ===
+        g2.setStroke(new BasicStroke(0.8f));
+        for (int i = 0; i < numPoints; i++) {
+            int next = (i + 1) % numPoints;
+            // Only draw highlight on top-half of each lobe
+            double segAngle = Math.atan2(yPoints[i] + yPoints[next], xPoints[i] + xPoints[next]);
+            double brightness = 0.5 + 0.5 * Math.cos(segAngle + Math.PI * 0.75);
+            if (brightness > 0.4) {
+                int a = (int)(brightness * 60);
+                g2.setColor(new Color(255, 255, 255, a));
+                g2.drawLine(xPoints[i], yPoints[i], xPoints[next], yPoints[next]);
+            }
+        }
 
-        // Three light positions (equally spaced around the ship)
+        // === INNER HULL DETAIL: panel lines from center to each lobe ===
+        g2.setStroke(new BasicStroke(1.0f));
+        for (int i = 0; i < 3; i++) {
+            double lineAngle = (i / 3.0) * 2 * Math.PI;
+            int lx = (int)Math.round(radius * 0.85 * Math.cos(lineAngle));
+            int ly = (int)Math.round(radius * 0.85 * Math.sin(lineAngle));
+            g2.setColor(new Color(outlineColor.getRed(), outlineColor.getGreen(), outlineColor.getBlue(), 100));
+            g2.drawLine(0, 0, lx, ly);
+        }
+
+        // === REACTOR CORE: glowing center with spinning ring ===
+        double coreTime = System.nanoTime() / 100_000_000.0;
+        float corePulse = 0.7f + 0.3f * (float)Math.sin(coreTime * 0.8);
+        int coreR = (int)(radius * 0.3);
+
+        // Outer glow halo
+        RadialGradientPaint coreGlow = new RadialGradientPaint(
+            new Point2D.Float(0, 0), coreR + 4,
+            new float[]{0f, 0.5f, 1f},
+            new Color[]{
+                new Color(255, 60, 200, (int)(100 * corePulse)),
+                new Color(180, 0, 255, (int)(50 * corePulse)),
+                new Color(100, 0, 150, 0)
+            }
+        );
+        g2.setPaint(coreGlow);
+        g2.fillOval(-(coreR + 4), -(coreR + 4), (coreR + 4) * 2, (coreR + 4) * 2);
+
+        // Dark inner circle
+        g2.setColor(new Color(15, 5, 25));
+        g2.fillOval(-coreR, -coreR, coreR * 2, coreR * 2);
+
+        // Spinning energy ring
+        g2.setStroke(new BasicStroke(1.5f));
+        double spinT = coreTime * 1.2;
+        for (int i = 0; i < 6; i++) {
+            double a = spinT + i * Math.PI / 3;
+            int arcStart = (int)Math.toDegrees(a);
+            int arcAlpha = (int)(140 * corePulse + 40 * Math.sin(a * 2));
+            g2.setColor(new Color(200, 100, 255, Math.max(0, Math.min(255, arcAlpha))));
+            g2.drawArc(-coreR + 1, -coreR + 1, (coreR - 1) * 2, (coreR - 1) * 2, arcStart, 20);
+        }
+
+        // Bright center dot
+        RadialGradientPaint dotGlow = new RadialGradientPaint(
+            new Point2D.Float(0, 0), coreR * 0.5f,
+            new float[]{0f, 0.4f, 1f},
+            new Color[]{
+                new Color(255, 220, 255, (int)(255 * corePulse)),
+                new Color(255, 60, 200, (int)(200 * corePulse)),
+                new Color(180, 0, 255, 0)
+            }
+        );
+        g2.setPaint(dotGlow);
+        int dotR = (int)(coreR * 0.5);
+        g2.fillOval(-dotR, -dotR, dotR * 2, dotR * 2);
+
+        // Tiny white spark at very center
+        g2.setColor(new Color(255, 255, 255, (int)(220 * corePulse)));
+        g2.fillOval(-2, -2, 4, 4);
+
+        // === SMALL NAV LIGHTS on lobe tips (replaces big red dots) ===
+        double blinkIntensity = (Math.sin(lightBlinkTimer) + 1.0) / 2.0;
         for (int i = 0; i < 3; i++) {
             double lightAngle = (i / 3.0) * 2 * Math.PI;
-            int lightX = (int)Math.round((radius * 0.6) * Math.cos(lightAngle));
-            int lightY = (int)Math.round((radius * 0.6) * Math.sin(lightAngle));
-            int lightRadius = 4 + (int)(2 * blinkIntensity);
+            double lr = radius * 0.78;
+            int lightX = (int)Math.round(lr * Math.cos(lightAngle));
+            int lightY = (int)Math.round(lr * Math.sin(lightAngle));
+            int lightR = 2;
 
-            g2.setColor(lightColor);
-            g2.fillOval(lightX - lightRadius, lightY - lightRadius, lightRadius * 2, lightRadius * 2);
-            g2.setColor(new Color(255, 200, 100));
-            g2.setStroke(new BasicStroke(1));
-            g2.drawOval(lightX - lightRadius, lightY - lightRadius, lightRadius * 2, lightRadius * 2);
+            // Small glow
+            int ga = (int)(80 * blinkIntensity);
+            g2.setColor(new Color(255, 100, 100, ga));
+            g2.fillOval(lightX - 4, lightY - 4, 8, 8);
+            // Bright pip
+            g2.setColor(new Color(255, (int)(160 * blinkIntensity), (int)(100 * blinkIntensity)));
+            g2.fillOval(lightX - lightR, lightY - lightR, lightR * 2, lightR * 2);
         }
 
         // === DRAW ELECTRICAL ACCELERATOR (in front of ship) ===
@@ -275,27 +401,22 @@ public class Player {
         int baseY2 = (int)Math.round(innerY + arrowWidth * Math.sin(gunAngle - Math.PI / 2));
 
         // === DRAW ELECTRICAL FLICKER FROM CENTER TO GUN TIP ===
-        // Core glow at center - electricity origin point
-        int coreRadius = 4;
         float pulse = 0.7f + 0.3f * (float)Math.sin(System.nanoTime() / 80_000_000.0);
-        for (int r = coreRadius + 6; r > 0; r--) {
-            float t = (float)r / (coreRadius + 6);
-            int alpha = (int)(60 * pulse * (1 - t));
-            g2.setColor(new Color(140, 220, 255, alpha));
-            g2.fillOval(-r, -r, r * 2, r * 2);
-        }
-        g2.setColor(new Color(220, 240, 255, (int)(255 * pulse)));
-        g2.fillOval(-coreRadius, -coreRadius, coreRadius * 2, coreRadius * 2);
-        g2.setColor(new Color(255, 255, 255, (int)(200 * pulse)));
-        g2.fillOval(-2, -2, 4, 4);
+        double ff = fireFlash;  // 0..1 firing intensity
+
+        // Electricity intensity scales with firing
+        int arcCount = 3 + (int)(ff * 2);           // 3 idle, up to 5 firing
+        float arcWidth = 1.0f;                       // always thin
+        int arcAlphaBoost = (int)(ff * 60);           // subtly brighter when firing
+        double jitterScale = 15 + ff * 5;             // slightly wilder when firing
 
         g2.setColor(new Color(100, 200, 255));
-        g2.setStroke(new BasicStroke(1.0f));
+        g2.setStroke(new BasicStroke(arcWidth));
         
-        // Draw 3-4 random electrical paths from center (0,0) to gun tip
-        for (int arc = 0; arc < 3; arc++) {
+        // Draw random electrical paths from center (0,0) to gun tip
+        for (int arc = 0; arc < arcCount; arc++) {
             // Random offset for jagged path
-            double offsetAmount = (Math.random() - 0.5) * 15;
+            double offsetAmount = (Math.random() - 0.5) * jitterScale;
             
             // Draw zigzag path from center to tip
             int prevX = 0, prevY = 0;
@@ -306,7 +427,7 @@ public class Player {
                 
                 if (step > 0) {
                     // Vary alpha for flicker effect
-                    int alpha = (int)(150 + Math.random() * 105);
+                    int alpha = Math.min(255, (int)(150 + Math.random() * 105) + arcAlphaBoost);
                     g2.setColor(new Color(100, 200, 255, alpha));
                     g2.drawLine(prevX, prevY, x, y);
                 }
@@ -317,7 +438,7 @@ public class Player {
 
         // Draw electrical arcs
         g2.setColor(new Color(100, 200, 255));
-        g2.setStroke(new BasicStroke(1));
+        g2.setStroke(new BasicStroke(arcWidth));
         
         // Three arc trails
         for (int arc = 0; arc < 3; arc++) {
@@ -340,7 +461,6 @@ public class Player {
 
         // Draw the main accelerator cone - open at tip for natural look
         Polygon electricalCone = new Polygon();
-        // Open tip: two points instead of one for a gap at the front
         int tipOffset = 4;
         int tipX1 = (int)Math.round(tipX + tipOffset * Math.cos(gunAngle + Math.PI / 4));
         int tipY1 = (int)Math.round(tipY + tipOffset * Math.sin(gunAngle + Math.PI / 4));
@@ -352,19 +472,15 @@ public class Player {
         electricalCone.addPoint(baseX2, baseY2);
         electricalCone.addPoint(baseX1, baseY1);
 
-        g2.setColor(new Color(150, 220, 255, 80));  // More transparent
+        g2.setColor(new Color(255, 20, 147, 80));  // Hot pink, semi-transparent
         g2.fillPolygon(electricalCone);
         
-        g2.setColor(new Color(100, 200, 255, 100));
+        g2.setColor(new Color(180, 0, 255, 120));  // Neon purple outline
         g2.setStroke(new BasicStroke(1.5f));
         g2.drawPolygon(electricalCone);
 
         // Restore graphics state
         g2.rotate(-shipRotation);
         g2.translate(-drawX, -drawY);
-
-        // Draw offset indicator
-        g2.setColor(Color.WHITE);
-        g2.drawString("Offset: " + String.format("%.2f", offsetAmt), drawX - 100, drawY - radius - 20);
     }
 }
