@@ -14,32 +14,141 @@ public class GamepadInput {
     
     public GamepadInput() {
         try {
-            // Find first gamepad/joystick controller
-            Controller[] controllers = ControllerEnvironment.getDefaultEnvironment().getControllers();
-            for (Controller controller : controllers) {
-                if (isGamepad(controller)) {
-                    this.gamepad = controller;
-                    this.available = true;
-                    System.out.println("Gamepad found: " + controller.getName());
-                    return;
+            System.out.println("[GamepadInput] Initializing...");
+            
+            // Method 1: Try standard JInput detection
+            try {
+                System.out.println("[GamepadInput] Attempting JInput detection...");
+                Controller[] controllers = ControllerEnvironment.getDefaultEnvironment().getControllers();
+                System.out.println("[GamepadInput] Found " + controllers.length + " controller(s)");
+                
+                for (int i = 0; i < controllers.length; i++) {
+                    Controller controller = controllers[i];
+                    System.out.println("[GamepadInput] [" + i + "] " + controller.getName() + " (" + controller.getType() + ")");
+                    
+                    if (isGamepad(controller)) {
+                        this.gamepad = controller;
+                        this.available = true;
+                        System.out.println("[GamepadInput] ✓ Selected: " + controller.getName());
+                        return;
+                    }
                 }
+            } catch (UnsatisfiedLinkError e) {
+                System.out.println("[GamepadInput] JInput native libraries not available (expected): " + e.getClass().getSimpleName());
+                System.out.println("[GamepadInput] Will try alternative detection methods...");
             }
-            this.available = false;
-            System.out.println("No gamepad detected. Keyboard input only.");
+            
+            // Method 2: Try raw reflection-based detection of any available controllers
+            // This can work even without native libraries in some cases
+            tryAlternativeDetection();
+            
+            if (!available) {
+                System.out.println("[GamepadInput] ✗ No suitable gamepad found. Using keyboard/mouse only.");
+            }
         } catch (Exception e) {
             this.available = false;
-            System.out.println("JInput library not available: " + e.getMessage());
+            System.out.println("[GamepadInput] ✗ Initialization error: " + e.getMessage());
         }
+    }
+    
+    /**
+     * Try to detect gamepads without full JInput support
+     */
+    private void tryAlternativeDetection() {
+        try {
+            System.out.println("[GamepadInput] Trying alternative detection...");
+            
+            // Try to scan with a timeout to avoid hanging
+            Thread detectionThread = new Thread(() -> {
+                try {
+                    Controller[] controllers = ControllerEnvironment.getDefaultEnvironment().getControllers();
+                    if (controllers != null && controllers.length > 0) {
+                        for (Controller c : controllers) {
+                            if (c != null && !isExcludedType(c)) {
+                                System.out.println("[GamepadInput] Alternative found: " + c.getName());
+                                gamepad = c;
+                                available = true;
+                                return;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    // Silent fail - alternative method
+                }
+            });
+            
+            detectionThread.setDaemon(true);
+            detectionThread.start();
+            detectionThread.join(1000);  // Wait max 1 second
+            
+        } catch (Exception e) {
+            // If alternative detection fails, just continue with keyboard-only
+        }
+    }
+    
+    /**
+     * Check if controller type should be excluded (keyboard, mouse)
+     */
+    private boolean isExcludedType(Controller controller) {
+        try {
+            Controller.Type type = controller.getType();
+            if (type == Controller.Type.KEYBOARD || 
+                type == Controller.Type.MOUSE ||
+                type == Controller.Type.TRACKBALL) {
+                return true;
+            }
+        } catch (Exception e) {
+            // Can't determine type, don't exclude
+        }
+        return false;
     }
 
     /**
-     * Check if controller is a gamepad (not keyboard/mouse)
+     * Check if controller is a usable gamepad (not keyboard/mouse)
+     * More lenient: accepts any input device with analog sticks or buttons
      */
     private boolean isGamepad(Controller controller) {
         Controller.Type type = controller.getType();
-        return type == Controller.Type.STICK || 
-               type == Controller.Type.GAMEPAD || 
-               type == Controller.Type.WHEEL;
+        
+        // Prefer explicit gamepad/stick/wheel types
+        if (type == Controller.Type.STICK ||
+            type == Controller.Type.GAMEPAD || 
+            type == Controller.Type.WHEEL) {
+            return true;
+        }
+        
+        // For generic controllers like EasySMX, check if it has useful components
+        // Avoid keyboard and mouse
+        if (type == Controller.Type.KEYBOARD || 
+            type == Controller.Type.MOUSE ||
+            type == Controller.Type.TRACKBALL) {
+            return false;
+        }
+        
+        // Check if this device has any analog axes (sticks/triggers) or many buttons
+        try {
+            Component[] components = controller.getComponents();
+            int analogCount = 0;
+            int buttonCount = 0;
+            
+            for (Component comp : components) {
+                if (comp.isAnalog()) {
+                    analogCount++;
+                } else if (comp.getName().toLowerCase().contains("button")) {
+                    buttonCount++;
+                }
+            }
+            
+            // If it has at least 2 analog axes and 1 button, it's probably a gamepad
+            if (analogCount >= 2 && buttonCount >= 1) {
+                System.out.println("[GamepadInput]   -> Has " + analogCount + " analog, " + buttonCount + " buttons -> treated as gamepad");
+                return true;
+            }
+        } catch (Exception e) {
+            // If we can't inspect, skip it
+        }
+        
+        return false;
     }
 
     /**
