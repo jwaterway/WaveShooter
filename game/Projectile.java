@@ -1,6 +1,8 @@
 package game;
 
 import java.awt.*;
+import java.awt.geom.Point2D;
+import java.awt.RadialGradientPaint;
 
 public class Projectile {
     double x, y;                 // current position
@@ -41,7 +43,7 @@ public class Projectile {
         this.offsetAmt = offsetAmt;
         this.gunType = gun;
 
-        this.speed = 6.0;
+        this.speed = 12.0;
         this.dx = speed * Math.cos(angle);
         this.dy = speed * Math.sin(angle);
 
@@ -106,12 +108,59 @@ public class Projectile {
         traveled += speed;
     }
 
+    /**
+     * Linearly interpolate between two colors (including alpha).
+     */
+    private Color lerp(Color a, Color b, double t) {
+        t = Math.max(0, Math.min(1, t));
+        int ar = a.getRed();
+        int ag = a.getGreen();
+        int ab = a.getBlue();
+        int aa = a.getAlpha();
+        int br = b.getRed();
+        int bg = b.getGreen();
+        int bb = b.getBlue();
+        int ba = b.getAlpha();
+        int r = (int)(ar + (br - ar) * t);
+        int g = (int)(ag + (bg - ag) * t);
+        int bcol = (int)(ab + (bb - ab) * t);
+        int acol = (int)(aa + (ba - aa) * t);
+        return new Color(r, g, bcol, acol);
+    }
+
+    /**
+     * Draw a radial glow at the tip of the projectile using a
+     * RadialGradientPaint. The center color is the projectile's
+     * base color and it fades to transparent.
+     */
+    private void drawTipGlow(Graphics2D g2) {
+        // pulse radius based on travelled distance for simple animation
+        float baseRadius = 12f;
+        float pulse = (float)(Math.sin(traveled * 0.3) * 2.0); // ±2 pixels
+        float radius = baseRadius + pulse;
+
+        Point2D center = new Point2D.Float((float)x, (float)y);
+        // three stops: solid center, mid-fade, outer fade-to-transparent
+        float[] dist = {0.0f, 0.6f, 1.0f};
+        Color[] colors = {
+            new Color(color.getRed(), color.getGreen(), color.getBlue(), 255),
+            new Color(color.getRed(), color.getGreen(), color.getBlue(), 120),
+            new Color(color.getRed(), color.getGreen(), color.getBlue(), 0)
+        };
+        RadialGradientPaint rgp = new RadialGradientPaint(center, radius, dist, colors);
+        Paint old = g2.getPaint();
+        g2.setPaint(rgp);
+        g2.fillOval((int)(x - radius), (int)(y - radius), (int)(radius * 2), (int)(radius * 2));
+        g2.setPaint(old);
+    }
+
     public boolean isOffscreen(int width, int height) {
         return x < -50 || x > width + 50 || y < -50 || y > height + 50;
     }
 
     public void draw(Graphics2D g2) {
-        g2.setColor(color);
+        // Draw a glowing tip first so it appears on top of the wave segments
+        drawTipGlow(g2);
 
         switch (type) {
             case "TRIANGLE":
@@ -124,6 +173,7 @@ public class Projectile {
                 drawSineWave(g2);
                 break;
             default:
+                g2.setColor(color);
                 g2.fillOval((int)(x - size / 2.0), (int)(y - size / 2.0), size, size);
         }
     }
@@ -138,6 +188,10 @@ public class Projectile {
         double freq = 0.22;
         double animSpeed = 0.15;
         double amp = offsetAmt * 7.0;
+
+        // prepare gradient endpoints
+        Color tipColor = color.brighter();
+        Color tailColor = new Color(color.getRed(), color.getGreen(), color.getBlue(), 50);
 
         for (int i = 0; i < count; i++) {
             double distBack = i * spacing;
@@ -161,6 +215,10 @@ public class Projectile {
             double drawX = px + ox;
             double drawY = py + oy;
 
+            // set gradient color for this segment
+            double t = (double)i / (count - 1);
+            g2.setColor(lerp(tipColor, tailColor, t));
+
             if (hasPrev) {
                 g2.drawLine((int)Math.round(prevX), (int)Math.round(prevY),
                             (int)Math.round(drawX), (int)Math.round(drawY));
@@ -183,6 +241,9 @@ public class Projectile {
         double animSpeed = 0.25;
         double amp = offsetAmt * 5.0;
 
+        Color tipColor = color.brighter();
+        Color tailColor = new Color(color.getRed(), color.getGreen(), color.getBlue(), 50);
+
         for (int i = 0; i < count; i++) {
             double distBack = i * spacing;
 
@@ -202,6 +263,10 @@ public class Projectile {
 
             double drawX = px + ox;
             double drawY = py + oy;
+
+            // gradient color
+            double t = (double)i / (count - 1);
+            g2.setColor(lerp(tipColor, tailColor, t));
 
             if (hasPrev) {
                 g2.drawLine((int)Math.round(prevX), (int)Math.round(prevY),
@@ -223,9 +288,12 @@ public class Projectile {
 
         double spacing = 1.6;
         int count = 24;
-        double freq = Math.max(0.18, offsetAmt * 0.25);
+        double freq = Math.max(0.12, offsetAmt * 0.15);
         double animSpeed = 0.25;
         double amp = 10.0 + offsetAmt * 4.0;
+
+        Color tipColor = color.brighter();
+        Color tailColor = new Color(color.getRed(), color.getGreen(), color.getBlue(), 50);
 
         for (int i = 0; i < count; i++) {
             double distBack = i * spacing;
@@ -245,6 +313,10 @@ public class Projectile {
 
             double drawX = px + ox;
             double drawY = py + oy;
+
+            // gradient color
+            double t = (double)i / (count - 1);
+            g2.setColor(lerp(tipColor, tailColor, t));
 
             if (hasPrev) {
                 g2.drawLine((int)Math.round(prevX), (int)Math.round(prevY),

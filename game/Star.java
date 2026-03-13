@@ -26,7 +26,7 @@ public class Star {
 
         switch ((int)(Math.random() * 9)) {
             case 0: case 5: core = Color.CYAN;    glow = new Color(0, 255, 255, 120); break;
-            case 1: case 6: core = Color.MAGENTA; glow = new Color(255, 0, 255, 120); break;
+            case 1: case 6: core = Color.MAGENTA; glow = new Color(255, 255, 135, 120); break;
             case 2:         core = Color.YELLOW;  glow = new Color(255, 255, 100, 120); break;
             case 3: case 7: case 8: /* fallthrough */ core = Color.WHITE; glow = new Color(255, 255, 255, 120); break;
             case 4:         core = Color.PINK;    glow = new Color(255, 255, 255, 120); break;

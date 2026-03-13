@@ -1,17 +1,16 @@
 {
-    "java.jdt.ls.java.home": "C:\\Program Files\\Java\\jdk-24",
-    "java.project.sourcePaths": [
-        "."
-    ],
-    "java.project.outputPath": "bin",
-    "java.configuration.runtimes": [
-        {
-            "name": "JavaSE-24",
-            "path": "C:\\Program Files\\Java\\jdk-24",
-            "default": true
-        }
-    ],
-    "java.debug.settings.onBuildFailureProceed": true,
-    // compile to Java 8 by default so `java` on old runtimes works
-    "java.compile.target": "1.8"
+  "java.project.sourcePaths": [
+    "."
+  ],
+  "java.project.outputPath": "bin",
+  "files.watcherExclude": {
+    "**/bin/**": true
+  },
+  "java.configuration.runtimes": [
+    {
+      "name": "JavaSE-24",
+      "path": "C:\\Program Files\\Java\\jdk-24"
+    }
+  ],
+  "java.home": "C:\\Program Files\\Java\\jdk-24"
 }
