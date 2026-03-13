@@ -32,10 +32,18 @@ if not exist bin mkdir bin
 if exist audio xcopy audio bin\audio /E /I /Y >nul
 
 :: compile sources (use JAVA_HOME javac if defined, otherwise whatever is on PATH)
+:: Build javac classpath: include JInput JAR if available
+set "JAVAC_CP=."
+if exist "lib\jinput-2.0.10.jar" (
+    set "JAVAC_CP=.;lib\jinput-2.0.10.jar"
+) else if exist "lib\jinput.jar" (
+    set "JAVAC_CP=.;lib\jinput.jar"
+)
+
 if defined JAVA_HOME (
-    "%JAVA_HOME%\bin\javac" --release 8 -d bin game\*.java 2>nul || javac --release 8 -d bin game\*.java
+    "%JAVA_HOME%\bin\javac" --release 8 -cp "%JAVAC_CP%" -d bin game\*.java 2>nul || javac --release 8 -cp "%JAVAC_CP%" -d bin game\*.java
 ) else (
-    javac --release 8 -d bin game\*.java
+    javac --release 8 -cp "%JAVAC_CP%" -d bin game\*.java
 )
 if errorlevel 1 (
     echo Compilation failed.
