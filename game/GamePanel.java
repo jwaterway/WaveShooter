@@ -26,14 +26,26 @@ public class GamePanel extends JPanel implements KeyListener {
 	ArrayList<EnemyShot> enemyShots = new ArrayList<>();
 	ArrayList<Shard> shards = new ArrayList<>();
 	ArrayList<PowerUp> powerUps = new ArrayList<>();
+	ArrayList<HomingMissile> missiles = new ArrayList<>();
+	ArrayList<Asteroid> asteroids = new ArrayList<>();
+	ArrayList<Nebula> nebulae = new ArrayList<>();
+	BossEnemy boss = null;
+	ArrayList<LaserEnemy> laserEnemies = new ArrayList<>();
 	ArrayList<SmokeParticle> smokes = new ArrayList<>();
+	ArrayList<SpaceStructure> spaceStructures = new ArrayList<>();
+	ArrayList<PhaseEnemy> phaseEnemies = new ArrayList<>();
+	DecoyField activeDecoy = null;  // deployed decoy that attracts missiles
 	double waveT = 0;
 	boolean wave1Active = false;
 	int waveNumber = 1;  // current wave number (progresses as enemies are cleared)
+	int currentLevel = 1;
+	// Level-complete cinematic state machine
+	int cinematicPhase = 0;   // 0 = normal play, 1-5 = cinematic stages
+	int cinematicTimer = 0;   // frame counter within current phase
 	
 	// firing rate (hold-to-fire)
 	double lastFireNs = 0;
-	double fireIntervalMs = 50;              // ~8 shots/sec; change to taste
+	double fireIntervalMs = 100;             // starting fire rate; improved by Voltage powerups
 	int dx = 0, dy = 0; // player movement direction
 	public static final int WIDTH = 1920;
 	public static final int HEIGHT = 1080;
@@ -82,6 +94,8 @@ public class GamePanel extends JPanel implements KeyListener {
     // Volume slider state
     private boolean draggingSfxSlider = false;
     private boolean draggingMusicSlider = false;
+    // Engine sound
+    private EngineSound engineSound = new EngineSound();
     private static final int SL_TRACK_X = WIDTH - 280 - 30 + 55;
     private static final int SL_TRACK_W = 225;
     private static final int SL_SFX_Y = 52 + 22 + 38;
@@ -110,6 +124,7 @@ public class GamePanel extends JPanel implements KeyListener {
         // generate stars
   
         player = new Player(WIDTH / 2, HEIGHT / 2, 40);
+        engineSound.start();
         spawnWave(waveNumber);
         for (int i = 0; i < NUMBEROFSTARS; i++) {  // number of stars
             stars.add(new Star(WIDTH, HEIGHT, Math.random()+.2)); 
@@ -121,7 +136,6 @@ public class GamePanel extends JPanel implements KeyListener {
         // Initialize gamepad input (gracefully handles missing JAR)
         gamepadInput = new GamepadInput();
         if (gamepadInput.isAvailable()) {
-            System.out.println("Gamepad support initialized");
         }
 
         // Mouse follows movement
@@ -198,8 +212,8 @@ public class GamePanel extends JPanel implements KeyListener {
     	}
     	lastFrameTime = now;
 
-    	// Record FPS sample into rolling buffer
-    	double instantFps = (frameMs > 0) ? 1000.0 / frameMs : 0;
+    	// Record FPS sample into rolling buffer (clamp to sane range)
+    	double instantFps = (frameMs > 1) ? 1000.0 / frameMs : fpsAvg2s;
     	fpsHistory[fpsHistoryIdx] = instantFps;
     	fpsHistoryIdx = (fpsHistoryIdx + 1) % fpsHistory.length;
     	if (fpsHistoryCount < fpsHistory.length) fpsHistoryCount++;
@@ -207,9 +221,8 @@ public class GamePanel extends JPanel implements KeyListener {
     	fpsStatsTimer += frameMs;
     	if (fpsStatsTimer >= 200) {
     	    fpsStatsTimer = 0;
-    	    // Only look back 2 seconds worth of frames
-    	    int lookback = Math.min(fpsHistoryCount, (int)(2000.0 / Math.max(1, frameMs)));
-    	    if (lookback < 2) lookback = fpsHistoryCount;
+    	    // Fixed lookback: ~2 seconds of frames at 60fps
+    	    int lookback = Math.min(fpsHistoryCount, 120);
     	    double sum = 0, min = Double.MAX_VALUE;
     	    for (int i = 0; i < lookback; i++) {
     	        int idx = (fpsHistoryIdx - 1 - i + fpsHistory.length) % fpsHistory.length;
@@ -218,7 +231,8 @@ public class GamePanel extends JPanel implements KeyListener {
     	        if (v < min) min = v;
     	    }
     	    fpsAvg2s = sum / lookback;
-    	    fpsMin2s = min;
+    	    // Min only decreases — sticks at the lowest seen
+    	    if (min < fpsMin2s) fpsMin2s = min;
     	}
     	
     	// Poll gamepad BEFORE pause/dead checks so Start always works
@@ -276,6 +290,12 @@ public class GamePanel extends JPanel implements KeyListener {
     	
     	if (paused) return;  // Skip update when paused
     	if (playerDead) return;
+
+    	// Level-complete cinematic update
+    	if (cinematicPhase > 0) {
+    	    updateCinematic();
+    	    return;
+    	}
     	
     	double vx = 0, vy = 0, dx = 0, dy = 0;
     	boolean up = upPressed || gpMoveY < 0;
@@ -291,13 +311,18 @@ public class GamePanel extends JPanel implements KeyListener {
     	    player.spinAngle -= Math.PI * 2; // keep it bounded
     	}
     	for (Star s : new ArrayList<>(stars)) {
-    	    s.update(WIDTH, HEIGHT, vx, vy, player.getAngle());
+    	    s.update(WIDTH, HEIGHT);
     	    s.updateWithBlackHoles(blackHoles);
     	}
     	if (nPressed) player.angle += 1; // speed to taste
     	if (bPressed) player.angle -= 1;
     	player.updateMovement(up, down, left, right);
         player.update(); // for spin
+        player.updateForcefield();
+        player.fireFlash *= 0.9;  // decay firing flash
+        if (player.fireFlash < 0.01) player.fireFlash = 0;
+        engineSound.setSpeedRatio(player.getSpeed() / player.maxSpeed);
+        engineSound.setVolume(AudioManager.getMasterVolume() * AudioManager.getSfxVolume() * 0.8f);
        /* for (int i = 0; i < projectiles.size(); i++) {
             Projectile p = projectiles.get(i);
             p.update();
@@ -350,6 +375,86 @@ public class GamePanel extends JPanel implements KeyListener {
         for (BlackHole bh : blackHoles) {
             bh.update(WIDTH, HEIGHT);
         }
+
+        // Update asteroids
+        for (int i = asteroids.size() - 1; i >= 0; i--) {
+            asteroids.get(i).update(WIDTH, HEIGHT);
+            if (!asteroids.get(i).isAlive()) asteroids.remove(i);
+        }
+
+        // Update nebulae
+        for (int i = nebulae.size() - 1; i >= 0; i--) {
+            nebulae.get(i).update(WIDTH, HEIGHT);
+            if (!nebulae.get(i).isAlive()) nebulae.remove(i);
+        }
+
+        // Update space structures
+        for (int i = spaceStructures.size() - 1; i >= 0; i--) {
+            spaceStructures.get(i).update(WIDTH, HEIGHT);
+            if (!spaceStructures.get(i).isAlive()) spaceStructures.remove(i);
+        }
+
+        // Player slowdown inside nebula
+        boolean inNebula = false;
+        for (Nebula n : nebulae) {
+            if (n.contains(player.getX(), player.getY())) {
+                inNebula = true;
+                break;
+            }
+        }
+        player.setSpeedMultiplier(inNebula ? 0.6 : 1.0);
+     // --- PROJECTILE ↔ ASTEROID COLLISIONS ---
+        for (int i = projectiles.size() - 1; i >= 0; i--) {
+            Projectile p = projectiles.get(i);
+            if (!p.isAlive()) continue;
+            for (int j = asteroids.size() - 1; j >= 0; j--) {
+                Asteroid a = asteroids.get(j);
+                double adx = p.getX() - a.getX();
+                double ady = p.getY() - a.getY();
+                double aHitR = p.getRadius() + a.getRadius();
+                if (adx * adx + ady * ady <= aHitR * aHitR) {
+                    a.kill();
+                    p.kill();
+                    player.score += 25;
+                    AudioManager.playSfx("explosion");
+                    rings.add(new ParticleRing(a.getX(), a.getY(), a.getRadius()));
+                    // Spawn debris shards
+                    for (int k = 0; k < 5; k++) {
+                        double ang = rng.nextDouble() * Math.PI * 2;
+                        double spd = 1.5 + rng.nextDouble() * 2.5;
+                        shards.add(new Shard(a.getX(), a.getY(), ang, spd, new Color(140, 120, 90)));
+                    }
+                    // Split into smaller asteroids
+                    asteroids.addAll(a.split());
+                    break;
+                }
+            }
+        }
+
+        // --- PLAYER ↔ ASTEROID COLLISIONS ---
+        for (int i = asteroids.size() - 1; i >= 0; i--) {
+            Asteroid a = asteroids.get(i);
+            double adx = player.getX() - a.getX();
+            double ady = player.getY() - a.getY();
+            double aHitR = player.radius + a.getRadius();
+            if (adx * adx + ady * ady <= aHitR * aHitR) {
+                if (player.hasForcefield()) {
+                    spawnForcefieldAbsorb(a.getX(), a.getY());
+                } else {
+                    player.takeDamage(15.0);
+                    player.applyKnockback(adx, ady, 6.0);
+                    AudioManager.playSfx("playerhit");
+                }
+                rings.add(new ParticleRing(a.getX(), a.getY(), a.getRadius()));
+                for (int k = 0; k < 4; k++) {
+                    double ang = rng.nextDouble() * Math.PI * 2;
+                    shards.add(new Shard(a.getX(), a.getY(), ang, 2.0, new Color(140, 120, 90), 1));
+                }
+                a.kill();
+                asteroids.addAll(a.split());
+            }
+        }
+
      // --- PROJECTILE ↔ BLACK HOLE COLLISIONS ---
         for (int i = projectiles.size() - 1; i >= 0; i--) {
             Projectile p = projectiles.get(i);
@@ -472,7 +577,7 @@ public class GamePanel extends JPanel implements KeyListener {
                 double enemyT = waveT - e.getPathOffset();
                 if (enemyT >= 0) {
                 	Point p = EnemyPaths.getPath(e.getWaveType(), enemyT, WIDTH);
-                    e.setPosition(p.x, p.y);
+                    e.setPosition(p.x, p.y + e.getRowYOffset());
                     // Kill enemies that have completed enough cycles (escaped off-screen)
                     if (enemyT > 260 * 8) {  // ~8 passes across the screen
                         e.takeDamage(e.getHealth());
@@ -522,16 +627,21 @@ public class GamePanel extends JPanel implements KeyListener {
             double dyP = player.getY() - s.getY();
             double hitR = player.radius + s.getRadius();
             if (dxP * dxP + dyP * dyP <= hitR * hitR) {
-                player.takeDamage(10.0);
-                player.applyKnockback(dxP, dyP, 5.0);
-                AudioManager.playSfx("playerhit");
-                // Spark effect on hit
-                for (int spark = 0; spark < 6; spark++) {
-                    double sparkAngle = (spark / 6.0) * 2 * Math.PI;
-                    Shard sparkParticle = new Shard(s.getX(), s.getY(), sparkAngle, 7.0, new Color(255, 100, 200), 1);
-                    shards.add(sparkParticle);
+                if (player.hasForcefield()) {
+                    // Forcefield absorbs — electric burst
+                    spawnForcefieldAbsorb(s.getX(), s.getY());
+                } else {
+                    player.takeDamage(10.0);
+                    player.applyKnockback(dxP, dyP, 5.0);
+                    AudioManager.playSfx("playerhit");
+                    // Spark effect on hit
+                    for (int spark = 0; spark < 6; spark++) {
+                        double sparkAngle = (spark / 6.0) * 2 * Math.PI;
+                        Shard sparkParticle = new Shard(s.getX(), s.getY(), sparkAngle, 7.0, new Color(255, 100, 200), 1);
+                        shards.add(sparkParticle);
+                    }
+                    rings.add(new ParticleRing(s.getX(), s.getY(), 10));
                 }
-                rings.add(new ParticleRing(s.getX(), s.getY(), 10));
                 enemyShots.remove(i);
             }
         }
@@ -543,21 +653,279 @@ public class GamePanel extends JPanel implements KeyListener {
             double dyE = player.getY() - e.getY();
             double hitR = player.radius + e.getRadius();
             if (dxE * dxE + dyE * dyE <= hitR * hitR) {
-                // bounce player away, lose flat 50%, enemy explodes
-                player.applyKnockback(dxE, dyE, 8.0);
-                player.takeDamage(50.0);
-                AudioManager.playSfx("playerhit");
-                spawnEnemyExplosion(e.getX(), e.getY(), e.getRadius(), Player.GunType.TRIANGLE);
-                e.takeDamage(e.getHealth());
+                if (player.hasForcefield()) {
+                    // Forcefield destroys enemy on contact
+                    spawnForcefieldAbsorb(e.getX(), e.getY());
+                    spawnEnemyExplosion(e.getX(), e.getY(), e.getRadius(), Player.GunType.TRIANGLE);
+                    e.takeDamage(e.getHealth());
+                    player.applyKnockback(dxE, dyE, 3.0);
+                } else {
+                    // bounce player away, lose flat 50%, enemy explodes
+                    player.applyKnockback(dxE, dyE, 8.0);
+                    player.takeDamage(50.0);
+                    AudioManager.playSfx("playerhit");
+                    spawnEnemyExplosion(e.getX(), e.getY(), e.getRadius(), Player.GunType.TRIANGLE);
+                    e.takeDamage(e.getHealth());
+                }
             }
         }
 
-        // Wave progression: if all enemies dead, spawn next wave
+        // Update power-ups and check collection
+        for (int i = powerUps.size() - 1; i >= 0; i--) {
+            PowerUp pu = powerUps.get(i);
+            pu.update();
+            if (!pu.isAlive()) { powerUps.remove(i); continue; }
+            double dxPU = player.getX() - pu.getX();
+            double dyPU = player.getY() - pu.getY();
+            if (dxPU * dxPU + dyPU * dyPU <= (player.radius + 18) * (player.radius + 18)) {
+                AudioManager.playSfx(pu.getSoundKey(), 0.8f);
+                // Apply effect
+                if (pu.getType() == PowerUp.Type.HEALTH) {
+                    player.heal(25.0);
+                } else if (pu.getType() == PowerUp.Type.SHIELD) {
+                    player.addForcefield();  // +10 sec, stacks
+                } else if (pu.getType() == PowerUp.Type.DECOY) {
+                    // Deploy decoy at player's current position
+                    activeDecoy = new DecoyField(player.getX(), player.getY());
+                } else if (pu.getType() == PowerUp.Type.WEAPON_BOOST) {
+                    if (player.getVoltageLevel() < Player.MAX_VOLTAGE) {
+                        player.addVoltage();
+                        // Recalculate fire interval: 100ms → 20ms over MAX_VOLTAGE steps
+                        fireIntervalMs = 100.0 - (80.0 * player.getVoltageLevel() / Player.MAX_VOLTAGE);
+                    }
+                }
+                rings.add(new ParticleRing(pu.getX(), pu.getY(), 16));
+                powerUps.remove(i);
+            }
+        }
+
+        // Update boss
+        if (boss != null && boss.isAlive()) {
+            boss.update(player.getX(), player.getY(), missiles);
+        }
+
+        // Update decoy field
+        if (activeDecoy != null) {
+            activeDecoy.update();
+            if (!activeDecoy.isAlive()) {
+                // Decoy expired — electric burst
+                rings.add(new ParticleRing(activeDecoy.getX(), activeDecoy.getY(), 30));
+                for (int sp = 0; sp < 8; sp++) {
+                    double ang = (sp / 8.0) * Math.PI * 2;
+                    shards.add(new Shard(activeDecoy.getX(), activeDecoy.getY(), ang, 3.0, new Color(100, 220, 255), 1));
+                }
+                AudioManager.playSfx("explosion", 0.4f);
+                activeDecoy = null;
+            }
+        }
+
+        // Update homing missiles and check player collision
+        // If decoy is active, missiles home toward the decoy instead
+        double missileTargetX = (activeDecoy != null) ? activeDecoy.getX() : player.getX();
+        double missileTargetY = (activeDecoy != null) ? activeDecoy.getY() : player.getY();
+        for (int i = missiles.size() - 1; i >= 0; i--) {
+            HomingMissile m = missiles.get(i);
+            m.update(missileTargetX, missileTargetY);
+            if (!m.isAlive()) {
+                // Spawn explosion if missile expired naturally (fizzed out)
+                if (m.hasExpired()) {
+                    rings.add(new ParticleRing(m.getX(), m.getY(), 18));
+                    rings.add(new ParticleRing(m.getX(), m.getY(), 10));
+                    for (int sp = 0; sp < 10; sp++) {
+                        double sparkAngle = (sp / 10.0) * 2 * Math.PI + Math.random() * 0.3;
+                        double spd = 2 + Math.random() * 4;
+                        shards.add(new Shard(m.getX(), m.getY(), sparkAngle, spd, new Color(255, 160, 40), 1));
+                    }
+                    for (int sp = 0; sp < 3; sp++) {
+                        double sx = m.getX() + (Math.random() - 0.5) * 16;
+                        double sy = m.getY() + (Math.random() - 0.5) * 16;
+                        smokes.add(new SmokeParticle(sx, sy));
+                    }
+                    AudioManager.playSfx("explosion");
+                }
+                missiles.remove(i); continue;
+            }
+            double dxM = player.getX() - m.getX();
+            double dyM = player.getY() - m.getY();
+            double hitRM = player.radius + HomingMissile.RADIUS;
+            if (dxM * dxM + dyM * dyM <= hitRM * hitRM) {
+                if (player.hasForcefield()) {
+                    spawnForcefieldAbsorb(m.getX(), m.getY());
+                } else {
+                    player.takeDamage(40.0);
+                    player.applyKnockback(dxM, dyM, 8.0);
+                    AudioManager.playSfx("playerhit");
+                    rings.add(new ParticleRing(m.getX(), m.getY(), 14));
+                    for (int sp = 0; sp < 6; sp++) {
+                        double sparkAngle = (sp / 6.0) * 2 * Math.PI;
+                        shards.add(new Shard(m.getX(), m.getY(), sparkAngle, 5.0, new Color(255, 140, 50), 1));
+                    }
+                }
+                missiles.remove(i);
+            }
+            // Missile ↔ Decoy collision — decoy absorbs missile with electric burst
+            else if (activeDecoy != null) {
+                double ddx = activeDecoy.getX() - m.getX();
+                double ddy = activeDecoy.getY() - m.getY();
+                double hitRD = activeDecoy.getRadius() + HomingMissile.RADIUS;
+                if (ddx * ddx + ddy * ddy <= hitRD * hitRD) {
+                    rings.add(new ParticleRing(m.getX(), m.getY(), 16));
+                    for (int sp = 0; sp < 8; sp++) {
+                        double sparkAngle = (sp / 8.0) * 2 * Math.PI;
+                        shards.add(new Shard(m.getX(), m.getY(), sparkAngle, 4.0, new Color(100, 220, 255), 1));
+                    }
+                    AudioManager.playSfx("explosion", 0.5f);
+                    missiles.remove(i);
+                }
+            }
+        }
+
+        // Projectile vs boss collision
+        if (boss != null && boss.isAlive()) {
+            for (int i = projectiles.size() - 1; i >= 0; i--) {
+                Projectile p = projectiles.get(i);
+                if (!p.isAlive()) continue;
+                double dxB = p.getX() - boss.getX();
+                double dyB = p.getY() - boss.getY();
+                double hitRB = p.getRadius() + boss.getRadius();
+                if (dxB * dxB + dyB * dyB <= hitRB * hitRB) {
+                    double dmg = getProjectileDamage(p);
+                    boss.takeDamage(dmg);
+                    rings.add(new ParticleRing(p.getX(), p.getY(), 8));
+                    p.kill();
+                    if (!boss.isAlive()) {
+                        spawnBossExplosion(boss.getX(), boss.getY(), boss.getRadius());
+                    }
+                }
+            }
+        }
+
+        // Update laser enemies
+        for (int i = laserEnemies.size() - 1; i >= 0; i--) {
+            LaserEnemy le = laserEnemies.get(i);
+            le.update(player.getX(), player.getY());
+            if (!le.isAlive()) {
+                // Death explosion
+                rings.add(new ParticleRing(le.getX(), le.getY(), le.getRadius() + 8));
+                rings.add(new ParticleRing(le.getX(), le.getY(), le.getRadius() + 20));
+                for (int sp = 0; sp < 12; sp++) {
+                    double ang = (sp / 12.0) * Math.PI * 2;
+                    shards.add(new Shard(le.getX(), le.getY(), ang, 3 + rng.nextDouble() * 4, new Color(255, 100, 200), 1));
+                }
+                AudioManager.playSfx("explosion");
+                player.score += 150;
+                laserEnemies.remove(i);
+                continue;
+            }
+            // Laser beam ↔ player collision
+            if (le.isFiring() && le.isBeamHitting(player.getX(), player.getY(), player.radius)) {
+                if (player.hasForcefield()) {
+                    // Forcefield absorbs — small sparks each frame
+                    if (rng.nextInt(8) == 0) spawnForcefieldAbsorb(player.getX(), player.getY());
+                } else {
+                    player.takeDamage(0.5); // continuous damage per frame (~30 dps)
+                    if (rng.nextInt(10) == 0) {
+                        AudioManager.playSfx("playerhit");
+                        rings.add(new ParticleRing(player.getX(), player.getY(), 8));
+                    }
+                }
+            }
+        }
+
+        // Projectile ↔ Laser Enemy collision
+        for (int i = projectiles.size() - 1; i >= 0; i--) {
+            Projectile p = projectiles.get(i);
+            if (!p.isAlive()) continue;
+            for (LaserEnemy le : laserEnemies) {
+                if (!le.isAlive()) continue;
+                double ldx = p.getX() - le.getX();
+                double ldy = p.getY() - le.getY();
+                double lHitR = p.getRadius() + le.getRadius();
+                if (ldx * ldx + ldy * ldy <= lHitR * lHitR) {
+                    double dmg = getProjectileDamage(p);
+                    le.takeDamage(dmg);
+                    rings.add(new ParticleRing(p.getX(), p.getY(), 8));
+                    for (int sp = 0; sp < 3; sp++) {
+                        double ang = rng.nextDouble() * Math.PI * 2;
+                        shards.add(new Shard(le.getX(), le.getY(), ang, 2.0, new Color(255, 100, 200), 1));
+                    }
+                    switch (p.getGunType()) {
+                        case TRIANGLE: p.kill(); break;
+                        case SQUARE: p.kill(); break;
+                        case SINE: p.incrementPierce(); if (p.getPierceCount() >= 3) p.kill(); break;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Update phase enemies (level 2+)
+        for (int i = phaseEnemies.size() - 1; i >= 0; i--) {
+            PhaseEnemy pe = phaseEnemies.get(i);
+            pe.update(player.getX(), player.getY(), enemyShots);
+            if (!pe.isAlive()) {
+                rings.add(new ParticleRing(pe.getX(), pe.getY(), pe.getRadius() + 10));
+                for (int sp = 0; sp < 10; sp++) {
+                    double ang = (sp / 10.0) * Math.PI * 2;
+                    shards.add(new Shard(pe.getX(), pe.getY(), ang, 3 + rng.nextDouble() * 4,
+                        new Color(180, 80, 255), 1));
+                }
+                AudioManager.playSfx("explosion");
+                player.score += 200;
+                if (rng.nextInt(4) == 0) {
+                    PowerUp.Type[] types = PowerUp.Type.values();
+                    powerUps.add(new PowerUp(pe.getX(), pe.getY(), types[rng.nextInt(types.length)]));
+                }
+                phaseEnemies.remove(i);
+                continue;
+            }
+        }
+
+        // Projectile ↔ Phase Enemy collision
+        for (int i = projectiles.size() - 1; i >= 0; i--) {
+            Projectile p = projectiles.get(i);
+            if (!p.isAlive()) continue;
+            for (PhaseEnemy pe : phaseEnemies) {
+                if (!pe.isAlive() || pe.getPhaseAlpha() < 0.4) continue;
+                double pdx = p.getX() - pe.getX();
+                double pdy = p.getY() - pe.getY();
+                double pHitR = p.getRadius() + pe.getRadius();
+                if (pdx * pdx + pdy * pdy <= pHitR * pHitR) {
+                    double dmg = getProjectileDamage(p);
+                    pe.takeDamage(dmg);
+                    rings.add(new ParticleRing(p.getX(), p.getY(), 8));
+                    switch (p.getGunType()) {
+                        case TRIANGLE: p.kill(); break;
+                        case SQUARE: p.kill(); break;
+                        case SINE: p.incrementPierce(); if (p.getPierceCount() >= 3) p.kill(); break;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Wave progression: if all enemies dead (and boss dead/absent), spawn next wave
         boolean anyAlive = false;
         for (Enemy e : enemies) { if (e.isAlive()) { anyAlive = true; break; } }
-        if (!anyAlive && !playerDead && enemies.size() > 0) {
-            waveNumber++;
-            spawnWave(waveNumber);
+        boolean bossAlive = (boss != null && boss.isAlive());
+        boolean laserAlive = false;
+        for (LaserEnemy le : laserEnemies) { if (le.isAlive()) { laserAlive = true; break; } }
+        boolean phaseAlive = false;
+        for (PhaseEnemy pe : phaseEnemies) { if (pe.isAlive()) { phaseAlive = true; break; } }
+        if (!anyAlive && !bossAlive && !laserAlive && !phaseAlive && !playerDead && enemies.size() > 0) {
+            if (waveNumber >= 10 && cinematicPhase == 0) {
+                // Level complete — start cinematic
+                cinematicPhase = 1;
+                cinematicTimer = 0;
+                enemies.clear();
+                enemyShots.clear();
+                missiles.clear();
+                asteroids.clear();
+                phaseEnemies.clear();
+            } else {
+                waveNumber++;
+                spawnWave(waveNumber);
+            }
         }
 
         // Player death: spawn a massive explosion once when health reaches 0
@@ -568,11 +936,14 @@ public class GamePanel extends JPanel implements KeyListener {
             enemyShots.clear();
             enemies.clear();
             projectiles.clear();
+            missiles.clear();
+            laserEnemies.clear();
+            phaseEnemies.clear();
+            activeDecoy = null;
             AudioManager.playSfx("explosion", 1.0f);
             AudioManager.playSfx("glassbreak", 1.0f);
+            engineSound.setSpeedRatio(0);
         }
-        
-        // update rings and cull dead ones
         for (int i = rings.size() - 1; i >= 0; i--) {
             ParticleRing r = rings.get(i);
             r.update();
@@ -651,6 +1022,7 @@ public class GamePanel extends JPanel implements KeyListener {
     private void tryFire() {
         long nowNs = System.nanoTime();
         if ((nowNs - lastFireNs) / 1_000_000 >= fireIntervalMs) {
+            player.fireFlash = 1.0;
         	double rad = Math.toRadians(player.getAngle());
         	double spawnOffset = 36.0;
 
@@ -676,28 +1048,110 @@ public class GamePanel extends JPanel implements KeyListener {
     }
     private void spawnWave(int wave) {
         enemies.clear();
+        missiles.clear();
         waveT = 0;
         wave1Active = true;
 
         int radius = 22;
-        double health = 5.0 + wave * 2.0;
+        double health = 3.0 + wave * 1.5;
         int formation = ((wave - 1) % 5) + 1;
 
         int rows, cols, pathType;
         switch (formation) {
-            case 1: rows = 2; cols = 5;  pathType = 1; break;  // small sine
-            case 2: rows = 3; cols = 5;  pathType = 1; break;  // medium sine
-            case 3: rows = 2; cols = 6;  pathType = 2; break;  // figure-8
+            case 1: rows = 2; cols = 3;  pathType = 1; break;  // small sine (fewer)
+            case 2: rows = 2; cols = 4;  pathType = 1; break;  // medium sine
+            case 3: rows = 2; cols = 5;  pathType = 2; break;  // figure-8
             case 4: rows = 3; cols = 4;  pathType = 3; break;  // diagonal dive
-            case 5: rows = 3; cols = 6;  pathType = 1; break;  // bigger sine
-            default: rows = 2; cols = 5;  pathType = 1; break;
+            case 5: rows = 3; cols = 5;  pathType = 1; break;  // bigger sine
+            default: rows = 2; cols = 3;  pathType = 1; break;
         }
 
+        double maxOffset = 0;
         for (int i = 0; i < cols; i++) {
             for (int j = 0; j < rows; j++) {
-                double offset = (j * 260) + (i * 20);
-                enemies.add(new Enemy(WIDTH + 100, 120, radius, health, offset, pathType));
+                double offset = (i * 50);
+                if (offset > maxOffset) maxOffset = offset;
+                Enemy e = new Enemy(WIDTH + 100, 120, radius, health, offset, pathType);
+                e.setRowYOffset(j * 160); // permanent vertical separation per row
+                enemies.add(e);
             }
+        }
+
+        // Spawn boss behind the formation (from wave 2 onwards)
+        if (wave >= 2) {
+            double bossHealth = 50.0 + wave * 10.0;
+            boss = new BossEnemy(WIDTH / 2.0, -200, bossHealth);
+            boss.setTargetPosition(WIDTH / 2.0, 140);
+        } else {
+            boss = null;
+        }
+
+        // Spawn asteroids (increasing with waves)
+        int asteroidCount = Math.min(3 + wave * 2, 14);
+        for (int i = 0; i < asteroidCount; i++) {
+            int side = rng.nextInt(4); // 0=top, 1=bottom, 2=left, 3=right
+            double ax, ay, avx, avy;
+            int aRadius = 20 + rng.nextInt(25);
+            switch (side) {
+                case 0:  ax = rng.nextInt(WIDTH); ay = -80; avx = (rng.nextDouble()-0.5)*1.5; avy = 0.3+rng.nextDouble()*0.6; break;
+                case 1:  ax = rng.nextInt(WIDTH); ay = HEIGHT+80; avx = (rng.nextDouble()-0.5)*1.5; avy = -(0.3+rng.nextDouble()*0.6); break;
+                case 2:  ax = -80; ay = rng.nextInt(HEIGHT); avx = 0.3+rng.nextDouble()*0.6; avy = (rng.nextDouble()-0.5)*1.5; break;
+                default: ax = WIDTH+80; ay = rng.nextInt(HEIGHT); avx = -(0.3+rng.nextDouble()*0.6); avy = (rng.nextDouble()-0.5)*1.5; break;
+            }
+            asteroids.add(new Asteroid(ax, ay, aRadius, avx, avy));
+        }
+
+        // Spawn nebula clouds (from wave 2, max 2 per wave)
+        if (wave >= 2) {
+            int nebulaCount = Math.min(1 + wave / 2, 3);
+            for (int i = 0; i < nebulaCount; i++) {
+                int nRadius = 120 + rng.nextInt(100);
+                int side = rng.nextInt(4);
+                double nx, ny, nvx, nvy;
+                switch (side) {
+                    case 0:  nx = rng.nextInt(WIDTH); ny = -nRadius*2; nvx = (rng.nextDouble()-0.5)*0.4; nvy = 0.15+rng.nextDouble()*0.2; break;
+                    case 1:  nx = rng.nextInt(WIDTH); ny = HEIGHT+nRadius*2; nvx = (rng.nextDouble()-0.5)*0.4; nvy = -(0.15+rng.nextDouble()*0.2); break;
+                    case 2:  nx = -nRadius*2; ny = rng.nextInt(HEIGHT); nvx = 0.15+rng.nextDouble()*0.2; nvy = (rng.nextDouble()-0.5)*0.4; break;
+                    default: nx = WIDTH+nRadius*2; ny = rng.nextInt(HEIGHT); nvx = -(0.15+rng.nextDouble()*0.2); nvy = (rng.nextDouble()-0.5)*0.4; break;
+                }
+                nebulae.add(new Nebula(nx, ny, nRadius, nvx, nvy));
+            }
+        }
+
+        // Spawn laser enemies (from wave 3 onwards, 1-2 per wave)
+        if (wave >= 3) {
+            int laserCount = Math.min(1 + (wave - 3) / 2, 3);
+            double laserHealth = 8.0 + wave * 3.0;
+            for (int i = 0; i < laserCount; i++) {
+                // Spawn off-screen, drift to a position in the upper third
+                double lx = 100 + rng.nextInt(WIDTH - 200);
+                double ly = -80;
+                LaserEnemy le = new LaserEnemy(lx, ly, laserHealth);
+                le.setTargetPosition(lx, 80 + rng.nextInt(200));
+                laserEnemies.add(le);
+            }
+        }
+
+        // Level 2: Spawn phase enemies (teleporting enemies)
+        if (currentLevel >= 2) {
+            int phaseCount = Math.min(1 + wave / 2, 4);
+            double phaseHealth = 6.0 + wave * 2.0;
+            for (int i = 0; i < phaseCount; i++) {
+                double px = 100 + rng.nextInt(WIDTH - 200);
+                double py = 50 + rng.nextInt((int)(HEIGHT * 0.35));
+                phaseEnemies.add(new PhaseEnemy(px, py, phaseHealth, WIDTH, HEIGHT));
+            }
+        }
+
+        // Level 2: Spawn exotic space structures (spiral/square-wave galaxies) every few waves
+        if (currentLevel >= 2 && wave % 3 == 1) {
+            SpaceStructure.Type sType = (rng.nextBoolean()) ?
+                SpaceStructure.Type.SPIRAL_GALAXY : SpaceStructure.Type.SQUARE_WAVE_GALAXY;
+            double sx = 100 + rng.nextInt(WIDTH - 200);
+            double sy = -300;
+            double svx = (rng.nextDouble() - 0.5) * 0.2;
+            double svy = 0.1 + rng.nextDouble() * 0.15;
+            spaceStructures.add(new SpaceStructure(sx, sy, sType, svx, svy));
         }
     }
     public static Point safeRandomPoint(int width, int height, java.util.List<BlackHole> holes) {
@@ -755,9 +1209,31 @@ public class GamePanel extends JPanel implements KeyListener {
         final ArrayList<Shard> shardsSnap       = new ArrayList<>(shards);
         final ArrayList<SmokeParticle> smokesSnap = new ArrayList<>(smokes);
         final ArrayList<EnemyShot> enemyShotsSnap = new ArrayList<>(enemyShots);
+        final ArrayList<PowerUp> powerUpsSnap = new ArrayList<>(powerUps);
+        final ArrayList<HomingMissile> missilesSnap = new ArrayList<>(missiles);
+        final ArrayList<Asteroid> asteroidsSnap = new ArrayList<>(asteroids);
+        final ArrayList<Nebula> nebulaeSnap = new ArrayList<>(nebulae);
+        final ArrayList<LaserEnemy> laserSnap = new ArrayList<>(laserEnemies);
+        final ArrayList<SpaceStructure> structSnap = new ArrayList<>(spaceStructures);
+        final BossEnemy bossSnap = boss;
+
+        // Draw nebulae behind everything (atmospheric background layer)
+        for (Nebula n : nebulaeSnap) {
+            n.draw(g2);
+        }
+
+        // Draw space structures (exotic galaxies, background layer)
+        for (SpaceStructure ss : structSnap) {
+            ss.draw(g2);
+        }
 
         for (Star s : starsSnap) {
             s.draw(g2, holesSnap);
+        }
+
+        // Draw asteroids
+        for (Asteroid a : asteroidsSnap) {
+            a.draw(g2);
         }
 
         // Draw player only if alive
@@ -802,6 +1278,61 @@ public class GamePanel extends JPanel implements KeyListener {
                     drawGradientHealthBar(g2, (int)e.getX() - 12, (int)e.getY() - 30, 24, 4, healthRatio, false, fadeAlpha);
                 }
             }
+        }
+
+        // Draw power-ups
+        for (PowerUp pu : powerUpsSnap) {
+            if (pu.isAlive()) pu.draw(g2);
+        }
+
+        // Draw boss
+        if (bossSnap != null && bossSnap.isAlive()) {
+            bossSnap.draw(g2);
+            // Boss health bar
+            long timeSinceHit = System.currentTimeMillis() - bossSnap.getLastHitTime();
+            if (timeSinceHit < 3000) {
+                double bossRatio = bossSnap.getHealth() / bossSnap.getMaxHealth();
+                double fadeAlpha = Math.max(0, Math.min(1.0, 1.0 - (timeSinceHit - 1500.0) / 1500.0));
+                drawGradientHealthBar(g2, (int)bossSnap.getX() - 60, (int)bossSnap.getY() - bossSnap.getRadius() - 20, 120, 8, bossRatio, false, fadeAlpha);
+            }
+        }
+
+        // Draw laser enemies (before missiles so beam renders under HUD layer)
+        for (LaserEnemy le : laserSnap) {
+            if (le.isAlive()) {
+                le.draw(g2);
+                // Health bar for recently hit laser enemies
+                long timeSinceHit = System.currentTimeMillis() - le.getLastHitTime();
+                if (timeSinceHit < 1500) {
+                    double healthRatio = le.getHealth() / le.getMaxHealth();
+                    double fadeAlpha = Math.max(0, Math.min(1.0, 1.0 - (timeSinceHit - 500.0) / 1000.0));
+                    drawGradientHealthBar(g2, (int)le.getX() - 16, (int)le.getY() - 38, 32, 5, healthRatio, false, fadeAlpha);
+                }
+            }
+        }
+
+        // Draw homing missiles
+        for (HomingMissile m : missilesSnap) {
+            if (m.isAlive()) m.draw(g2);
+        }
+
+        // Draw phase enemies
+        final ArrayList<PhaseEnemy> phaseSnap = new ArrayList<>(phaseEnemies);
+        for (PhaseEnemy pe : phaseSnap) {
+            if (pe.isAlive()) {
+                pe.draw(g2);
+                long timeSinceHit = System.currentTimeMillis() - pe.getLastHitTime();
+                if (timeSinceHit < 1500) {
+                    double pHealthRatio = pe.getHealth() / pe.getMaxHealth();
+                    double pFadeAlpha = Math.max(0, Math.min(1.0, 1.0 - (timeSinceHit - 500.0) / 1000.0));
+                    drawGradientHealthBar(g2, (int)pe.getX() - 14, (int)pe.getY() - 38, 28, 4, pHealthRatio, false, pFadeAlpha);
+                }
+            }
+        }
+
+        // Draw decoy field
+        if (activeDecoy != null && activeDecoy.isAlive()) {
+            activeDecoy.draw(g2);
         }
 
         // ========== HUD TICK ==========
@@ -856,12 +1387,26 @@ public class GamePanel extends JPanel implements KeyListener {
             g2.drawString("SCORE", scoreX - g2.getFontMetrics().stringWidth("SCORE") - 8, scoreY);
         }
 
+        // ========== VOLTAGE BAR ==========
+        {
+            double voltRatio = player.getVoltageLevel() / (double)Player.MAX_VOLTAGE;
+            int vBarY = barY + barHeight + 14;
+            int vBarH = 16;
+            drawVoltageBar(g2, barX, vBarY, barWidth, vBarH, voltRatio);
+        }
+
+        // ========== FORCEFIELD INDICATOR ==========
+        {
+            int ffY = barY + barHeight + 48;
+            drawForcefieldIndicator(g2, barX, ffY, barWidth);
+        }
+
         // ========== WAVE BADGE (left of health bar) ==========
         {
             g2.setFont(new Font("Arial", Font.BOLD, 18));
             g2.setColor(new Color(180, 200, 220));
-            String waveStr = "WAVE " + waveNumber;
-            g2.drawString(waveStr, barX, barY + barHeight + 20);
+            String waveStr = "L" + currentLevel + " WAVE " + waveNumber;
+            g2.drawString(waveStr, barX, barY + barHeight + 82);
         }
 
         // ========== VOLUME SLIDERS ==========
@@ -869,7 +1414,7 @@ public class GamePanel extends JPanel implements KeyListener {
             int slTrackX = barX + 55;
             int slTrackW = barWidth - 55;
             int slH = 8;
-            int sfxSlY = barY + barHeight + 38;
+            int sfxSlY = barY + barHeight + 100;
             int musSlY = sfxSlY + 22;
             drawVolumeSlider(g2, "SFX", barX, sfxSlY, slTrackX, slTrackW, slH, AudioManager.getSfxVolume());
             drawVolumeSlider(g2, "MUSIC", barX, musSlY, slTrackX, slTrackW, slH, AudioManager.getMusicVolume());
@@ -884,7 +1429,7 @@ public class GamePanel extends JPanel implements KeyListener {
         g2.drawString("FPS: " + String.format("%.0f", 1000 / frameMs)
             + "  avg: " + String.format("%.0f", fpsAvg2s)
             + "  low: " + String.format("%.0f", fpsMin2s), 20, statY); statY += statGap;
-        g2.drawString("Wave: " + waveNumber, 20, statY);
+        g2.drawString("Level: " + currentLevel + "  Wave: " + waveNumber, 20, statY);
         
         // Draw pause overlay if paused
         if (paused && !playerDead) {
@@ -928,6 +1473,11 @@ public class GamePanel extends JPanel implements KeyListener {
             x = (WIDTH - fm.stringWidth(optionsText)) / 2;
             g2.drawString(optionsText, x, y + 150);
         }
+
+        // Draw cinematic overlay
+        if (cinematicPhase > 0) {
+            drawCinematic(g2);
+        }
     }
 
     // Input handling
@@ -954,6 +1504,10 @@ public class GamePanel extends JPanel implements KeyListener {
             case KeyEvent.VK_1: player.setGun(Player.GunType.TRIANGLE); break;
             case KeyEvent.VK_2: player.setGun(Player.GunType.SQUARE);   break;
             case KeyEvent.VK_3: player.setGun(Player.GunType.SINE);     break;
+            case KeyEvent.VK_X: player.addForcefield(); System.out.println("FORCEFIELD ADDED: " + player.getForcefieldTimer()); break; // DEBUG: toggle forcefield
+            case KeyEvent.VK_F: player.addForcefield(); System.out.println("FORCEFIELD ADDED (F): " + player.getForcefieldTimer()); break; // DEBUG: alt key
+            case KeyEvent.VK_W: skipWave(); break; // DEBUG: skip to next wave
+            case KeyEvent.VK_D: activeDecoy = new DecoyField(player.getX(), player.getY()); System.out.println("DECOY DEPLOYED"); break; // DEBUG: deploy decoy
         }
     }
 
@@ -996,6 +1550,12 @@ private void spawnEnemyExplosion(double x, double y, int radius, Player.GunType 
     player.score = player.score + 50;
     AudioManager.playSfx("explosion");
     AudioManager.playSfx("glassbreak");
+    // 1/5 chance to drop a power-up
+    if (rng.nextInt(5) == 0) {
+        PowerUp.Type[] types = PowerUp.Type.values();
+        PowerUp.Type type = types[rng.nextInt(types.length)];
+        powerUps.add(new PowerUp(x, y, type));
+    }
     // shards flying out (reduced by half)
     for (int i = 0; i < 4; i++) {
         double ang = rng.nextDouble() * Math.PI * 2;
@@ -1017,12 +1577,28 @@ private void spawnEnemyExplosion(double x, double y, int radius, Player.GunType 
     }
 }
 
+/** Electric burst when forcefield absorbs a projectile/collision. */
+private void spawnForcefieldAbsorb(double x, double y) {
+    AudioManager.playSfx("explosion", 0.5f);
+    rings.add(new ParticleRing(x, y, 12));
+    for (int i = 0; i < 8; i++) {
+        double ang = (i / 8.0) * Math.PI * 2 + Math.random() * 0.3;
+        shards.add(new Shard(x, y, ang, 4.0 + Math.random() * 3, new Color(100, 220, 255), 1));
+    }
+}
+
 private void restartGame() {
         playerDead = false;
         paused = false;
         waveNumber = 1;
+        currentLevel = 1;
         displayScore = 0;
         lastScoreChangeTime = 0;
+        fpsMin2s = 999;
+        fpsHistoryCount = 0;
+        fireIntervalMs = 100;  // reset to starting fire rate
+        cinematicPhase = 0;
+        cinematicTimer = 0;
         player = new Player(WIDTH / 2, HEIGHT / 2, 40);
         projectiles.clear();
         enemies.clear();
@@ -1031,8 +1607,27 @@ private void restartGame() {
         shards.clear();
         smokes.clear();
         blackHoles.clear();
+        powerUps.clear();
+        missiles.clear();
+        asteroids.clear();
+        nebulae.clear();
+        laserEnemies.clear();
+        spaceStructures.clear();
+        phaseEnemies.clear();
+        activeDecoy = null;
+        boss = null;
         spawnWave(waveNumber);
     }
+
+/** DEBUG: skip current wave by killing all enemies. */
+private void skipWave() {
+    if (playerDead || cinematicPhase > 0) return;
+    for (Enemy e : enemies) e.takeDamage(9999);
+    if (boss != null) boss.takeDamage(9999);
+    for (LaserEnemy le : laserEnemies) le.takeDamage(9999);
+    for (PhaseEnemy pe : phaseEnemies) pe.takeDamage(9999);
+    System.out.println("SKIP WAVE -> next wave: " + (waveNumber + 1));
+}
 
 private void spawnPlayerExplosion(double x, double y, int radius) {
     // large rings (reduced by half)
@@ -1049,6 +1644,28 @@ private void spawnPlayerExplosion(double x, double y, int radius) {
     for (int i = 0; i < 16; i++) {
         double sx = x + (rng.nextDouble() - 0.5) * radius * 3;
         double sy = y + (rng.nextDouble() - 0.5) * radius * 3;
+        smokes.add(new SmokeParticle(sx, sy));
+    }
+}
+
+private void spawnBossExplosion(double x, double y, int radius) {
+    player.score += 500;
+    AudioManager.playSfx("explosion", 1.0f);
+    AudioManager.playSfx("glassbreak", 1.0f);
+    // Massive rings
+    for (int i = 0; i < 5; i++) {
+        rings.add(new ParticleRing(x, y, radius / 2 + i * 20));
+    }
+    // Tons of shards
+    for (int i = 0; i < 40; i++) {
+        double ang = rng.nextDouble() * Math.PI * 2;
+        double spd = 2 + rng.nextDouble() * 8;
+        shards.add(new Shard(x, y, ang, spd, new Color(180, 120, 255)));
+    }
+    // Heavy smoke
+    for (int i = 0; i < 12; i++) {
+        double sx = x + (rng.nextDouble() - 0.5) * radius * 2;
+        double sy = y + (rng.nextDouble() - 0.5) * radius * 2;
         smokes.add(new SmokeParticle(sx, sy));
     }
 }
@@ -1188,7 +1805,19 @@ private void drawFancyHealthBar(Graphics2D g2, int x, int y, int width, int heig
 
     g2.setFont(new Font("Arial", Font.BOLD, 14));
     g2.setColor(new Color(130, 170, 200, 200));
-    g2.drawString("HP", x - 28, y + height - 5);
+    g2.drawString("ENERGY", x, y - 6);
+
+    // Percentage text inside the bar
+    int pct = (int)Math.round(ratio * 100);
+    String pctStr = pct + "%";
+    g2.setFont(new Font("Arial", Font.BOLD, 13));
+    FontMetrics fm = g2.getFontMetrics();
+    int textX = x + (width - fm.stringWidth(pctStr)) / 2;
+    int textY = y + height - (height - fm.getAscent()) / 2 - 1;
+    g2.setColor(new Color(0, 0, 0, 140));
+    g2.drawString(pctStr, textX + 1, textY + 1);
+    g2.setColor(new Color(220, 240, 255, 220));
+    g2.drawString(pctStr, textX, textY);
 }
 
 private void drawVolumeSlider(Graphics2D g2, String label, int labelX, int y, int trackX, int trackW, int h, float value) {
@@ -1218,5 +1847,420 @@ private void drawVolumeSlider(Graphics2D g2, String label, int labelX, int y, in
     g2.setFont(new Font("Consolas", Font.PLAIN, 11));
     g2.setColor(new Color(160, 200, 220));
     g2.drawString((int)(value * 100) + "%", trackX + trackW + 8, y + h / 2 + 4);
+}
+
+/** Voltage bar — gold/electric theme showing weapon boost level. */
+private void drawVoltageBar(Graphics2D g2, int x, int y, int width, int height, double ratio) {
+    ratio = Math.max(0, Math.min(1, ratio));
+    double pulse = 0.85 + 0.15 * Math.sin(hudTick * 0.10);
+
+    // Gold color ramp
+    int r = 255, gr = (int)(180 + 40 * ratio), b = 40;
+
+    // Outer glow
+    for (int i = 3; i >= 1; i--) {
+        int ga = (int)(25 * pulse * (1.0 - i / 4.0));
+        g2.setColor(new Color(r, gr, b, ga));
+        g2.fillRoundRect(x - i * 2, y - i * 2, width + i * 4, height + i * 4, 6, 6);
+    }
+
+    // Background
+    g2.setColor(new Color(15, 15, 10, 220));
+    g2.fillRoundRect(x, y, width, height, 4, 4);
+
+    // Segment lines
+    int numSegments = Player.MAX_VOLTAGE;
+    g2.setStroke(new BasicStroke(1.0f));
+    for (int i = 1; i < numSegments; i++) {
+        int sx = x + (int)(width * i / (double)numSegments);
+        g2.setColor(new Color(80, 70, 30, 100));
+        g2.drawLine(sx, y + 1, sx, y + height - 1);
+    }
+
+    // Fill
+    int fillWidth = (int)(width * ratio);
+    if (fillWidth > 0) {
+        GradientPaint gp = new GradientPaint(x, y,
+            new Color(180, 120, 0), x + fillWidth, y, new Color(255, 220, 60));
+        g2.setPaint(gp);
+        g2.fillRoundRect(x + 1, y + 1, fillWidth - 1, height - 2, 3, 3);
+
+        // Highlight sheen
+        g2.setColor(new Color(255, 255, 200, (int)(50 * pulse)));
+        g2.fillRoundRect(x + 2, y + 2, fillWidth - 3, height / 3, 2, 2);
+
+        // Electric crackle sweep
+        double sweepT = (hudTick % 90) / 90.0;
+        int sweepX = x + (int)(width * sweepT);
+        if (sweepX < x + fillWidth) {
+            for (int i = 0; i < 20; i++) {
+                int sx2 = sweepX + i;
+                if (sx2 >= x && sx2 <= x + fillWidth) {
+                    double si = Math.sin(i * Math.PI / 20);
+                    g2.setColor(new Color(255, 255, 180, (int)(60 * si)));
+                    g2.drawLine(sx2, y + 1, sx2, y + height - 2);
+                }
+            }
+        }
+    }
+
+    // Border
+    g2.setStroke(new BasicStroke(1.2f));
+    g2.setColor(new Color(200, 180, 80, (int)(160 * pulse)));
+    g2.drawRoundRect(x, y, width, height, 4, 4);
+
+    // Label
+    g2.setFont(new Font("Arial", Font.BOLD, 11));
+    g2.setColor(new Color(220, 200, 100, 200));
+    g2.drawString("VOLTAGE", x, y - 3);
+
+    // Level text inside
+    String lvlStr = player.getVoltageLevel() + "/" + Player.MAX_VOLTAGE;
+    g2.setFont(new Font("Arial", Font.BOLD, 10));
+    FontMetrics fm = g2.getFontMetrics();
+    int textX = x + (width - fm.stringWidth(lvlStr)) / 2;
+    int textY = y + height - (height - fm.getAscent()) / 2 - 1;
+    g2.setColor(new Color(0, 0, 0, 120));
+    g2.drawString(lvlStr, textX + 1, textY + 1);
+    g2.setColor(new Color(255, 240, 180, 220));
+    g2.drawString(lvlStr, textX, textY);
+}
+
+/** Forcefield indicator — shows remaining time with animated icon. */
+private void drawForcefieldIndicator(Graphics2D g2, int x, int y, int width) {
+    boolean active = player.hasForcefield();
+    double pulse = 0.6 + 0.4 * Math.sin(hudTick * 0.12);
+
+    // Icon: small hexagon
+    int iconR = 8;
+    int iconCx = x + iconR + 2;
+    int iconCy = y + 6;
+    Polygon hex = new Polygon();
+    for (int i = 0; i < 6; i++) {
+        double a = Math.PI / 6 + i * Math.PI / 3;
+        hex.addPoint(iconCx + (int)(iconR * Math.cos(a)), iconCy + (int)(iconR * Math.sin(a)));
+    }
+
+    if (active) {
+        // Glowing hex icon
+        g2.setColor(new Color(80, 200, 255, (int)(60 * pulse)));
+        g2.fillPolygon(hex);
+        g2.setStroke(new BasicStroke(1.5f));
+        g2.setColor(new Color(100, 220, 255, (int)(220 * pulse)));
+        g2.drawPolygon(hex);
+
+        // Timer text
+        double secondsLeft = player.getForcefieldTimer() / 60.0;
+        String timeStr = String.format("%.1fs", secondsLeft);
+        g2.setFont(new Font("Arial", Font.BOLD, 12));
+        g2.setColor(new Color(100, 220, 255, (int)(200 * pulse)));
+        g2.drawString("FORCEFIELD", iconCx + iconR + 6, iconCy + 4);
+
+        FontMetrics fm = g2.getFontMetrics();
+        int timeX = x + width - fm.stringWidth(timeStr);
+        g2.setColor(new Color(0, 0, 0, 100));
+        g2.drawString(timeStr, timeX + 1, iconCy + 5);
+        g2.setColor(new Color(140, 240, 255));
+        g2.drawString(timeStr, timeX, iconCy + 4);
+
+        // Countdown arc around icon
+        int arcAngle = (int)(360.0 * (player.getForcefieldTimer() % 600) / 600.0);
+        g2.setStroke(new BasicStroke(2.0f));
+        g2.setColor(new Color(80, 200, 255, (int)(150 * pulse)));
+        g2.drawArc(iconCx - iconR - 2, iconCy - iconR - 2, (iconR + 2) * 2, (iconR + 2) * 2, 90, arcAngle);
+    } else {
+        // Dimmed icon when inactive
+        g2.setColor(new Color(60, 80, 90, 80));
+        g2.fillPolygon(hex);
+        g2.setStroke(new BasicStroke(1.0f));
+        g2.setColor(new Color(80, 100, 110, 100));
+        g2.drawPolygon(hex);
+
+        g2.setFont(new Font("Arial", Font.BOLD, 12));
+        g2.setColor(new Color(80, 100, 110, 100));
+        g2.drawString("FORCEFIELD", iconCx + iconR + 6, iconCy + 4);
+    }
+}
+
+// ==================== LEVEL-COMPLETE CINEMATIC ====================
+
+/**
+ * Cinematic phases:
+ * 1 — Victory explosions around the screen (180 frames / 3s)
+ * 2 — Ship opens up, electricity shoots everywhere (240 frames / 4s)
+ * 3 — White flash + "LEVEL COMPLETE" text (120 frames / 2s)
+ * 4 — Hyperspace tunnel transition (180 frames / 3s)
+ * 5 — Level 2 arrival — fade in, spawn level 2 content (90 frames / 1.5s)
+ */
+private void updateCinematic() {
+    cinematicTimer++;
+    // Keep stars drifting during cinematic
+    for (Star s : new ArrayList<>(stars)) {
+        s.update(WIDTH, HEIGHT);
+    }
+    // Update particles still alive
+    for (int i = rings.size() - 1; i >= 0; i--) {
+        rings.get(i).update();
+        if (!rings.get(i).isAlive()) rings.remove(i);
+    }
+    for (int i = shards.size() - 1; i >= 0; i--) {
+        shards.get(i).update();
+        if (!shards.get(i).isAlive()) shards.remove(i);
+    }
+    for (int i = smokes.size() - 1; i >= 0; i--) {
+        smokes.get(i).update();
+        if (!smokes.get(i).isAlive()) smokes.remove(i);
+    }
+
+    switch (cinematicPhase) {
+        case 1: // Victory explosions
+            if (cinematicTimer % 12 == 0) {
+                double ex = 200 + rng.nextInt(WIDTH - 400);
+                double ey = 100 + rng.nextInt(HEIGHT - 200);
+                rings.add(new ParticleRing(ex, ey, 20 + rng.nextInt(30)));
+                for (int i = 0; i < 6; i++) {
+                    double ang = rng.nextDouble() * Math.PI * 2;
+                    shards.add(new Shard(ex, ey, ang, 2 + rng.nextDouble() * 5,
+                        new Color(100 + rng.nextInt(155), 180 + rng.nextInt(75), 255)));
+                }
+                AudioManager.playSfx("explosion", 0.6f);
+            }
+            // Move player to center
+            player.x += (WIDTH / 2.0 - player.x) * 0.03;
+            player.y += (HEIGHT / 2.0 - player.y) * 0.03;
+            if (cinematicTimer >= 180) { cinematicPhase = 2; cinematicTimer = 0; }
+            break;
+
+        case 2: // Ship electricity — spawn electric arcs from player
+            player.x += (WIDTH / 2.0 - player.x) * 0.05;
+            player.y += (HEIGHT / 2.0 - player.y) * 0.05;
+            // Spawn electric shards radiating outward
+            if (cinematicTimer % 3 == 0) {
+                int numArcs = 4 + rng.nextInt(4);
+                for (int i = 0; i < numArcs; i++) {
+                    double ang = rng.nextDouble() * Math.PI * 2;
+                    double dist = 30 + rng.nextDouble() * 80;
+                    double sx = player.x + Math.cos(ang) * dist;
+                    double sy = player.y + Math.sin(ang) * dist;
+                    shards.add(new Shard(sx, sy, ang, 3 + rng.nextDouble() * 4,
+                        new Color(80 + rng.nextInt(80), 180 + rng.nextInt(75), 255), 1));
+                }
+            }
+            // Expanding rings
+            if (cinematicTimer % 20 == 0) {
+                rings.add(new ParticleRing(player.x, player.y, 15 + cinematicTimer / 4));
+                AudioManager.playSfx("explosion", 0.4f);
+            }
+            if (cinematicTimer >= 240) { cinematicPhase = 3; cinematicTimer = 0; }
+            break;
+
+        case 3: // White flash + level complete text
+            if (cinematicTimer >= 120) { cinematicPhase = 4; cinematicTimer = 0; }
+            break;
+
+        case 4: // Hyperspace tunnel
+            // Speed up stars dramatically
+            for (Star s : stars) {
+                s.setDriftMultiplier(3.0 + cinematicTimer * 0.1);
+            }
+            if (cinematicTimer >= 180) {
+                cinematicPhase = 5;
+                cinematicTimer = 0;
+                // Transition to level 2
+                currentLevel = 2;
+                waveNumber = 1;
+                enemies.clear();
+                enemyShots.clear();
+                projectiles.clear();
+                missiles.clear();
+                asteroids.clear();
+                nebulae.clear();
+                laserEnemies.clear();
+                powerUps.clear();
+                boss = null;
+                // Spawn exotic structures for level 2
+                spawnLevel2Structures();
+            }
+            break;
+
+        case 5: // Fade in to level 2
+            // Reset star speed
+            for (Star s : stars) {
+                double t = cinematicTimer / 90.0;
+                s.setDriftMultiplier(Math.max(1.0, 3.0 - t * 2.0));
+            }
+            if (cinematicTimer >= 90) {
+                cinematicPhase = 0;
+                cinematicTimer = 0;
+                for (Star s : stars) s.setDriftMultiplier(1.0);
+                spawnWave(waveNumber);
+            }
+            break;
+    }
+}
+
+private void drawCinematic(Graphics2D g2) {
+    switch (cinematicPhase) {
+        case 1: // Victory explosions — draw "LEVEL CLEAR!" fading in
+        {
+            double alpha = Math.min(1.0, cinematicTimer / 60.0);
+            g2.setFont(new Font("Arial", Font.BOLD, 52));
+            FontMetrics fm = g2.getFontMetrics();
+            String text = "LEVEL " + currentLevel + " CLEAR!";
+            int tx = (WIDTH - fm.stringWidth(text)) / 2;
+            int ty = HEIGHT / 2 - 160;
+            // Glow
+            g2.setColor(new Color(100, 200, 255, (int)(60 * alpha)));
+            g2.drawString(text, tx - 2, ty - 2);
+            g2.drawString(text, tx + 2, ty + 2);
+            // Main text
+            g2.setColor(new Color(220, 240, 255, (int)(255 * alpha)));
+            g2.drawString(text, tx, ty);
+            break;
+        }
+
+        case 2: // Ship electricity — draw electric arcs from player center
+        {
+            Composite oldComp = g2.getComposite();
+            double pulse = 0.6 + 0.4 * Math.sin(cinematicTimer * 0.3);
+            int numBolts = 8 + cinematicTimer / 15;
+            g2.setStroke(new BasicStroke(2.5f));
+            for (int b = 0; b < numBolts; b++) {
+                double bAng = (b / (double)numBolts) * Math.PI * 2 + cinematicTimer * 0.05;
+                double bLen = 100 + 200 * (cinematicTimer / 240.0) + rng.nextDouble() * 80;
+                // Draw jagged lightning bolt
+                double cx = player.x, cy = player.y;
+                int segments = 6 + rng.nextInt(4);
+                for (int s = 0; s < segments; s++) {
+                    double frac = (s + 1.0) / segments;
+                    double nx = player.x + Math.cos(bAng) * bLen * frac + (rng.nextDouble() - 0.5) * 30;
+                    double ny = player.y + Math.sin(bAng) * bLen * frac + (rng.nextDouble() - 0.5) * 30;
+                    int a = (int)(180 * pulse * (1.0 - frac * 0.5));
+                    g2.setColor(new Color(120, 200, 255, a));
+                    g2.drawLine((int)cx, (int)cy, (int)nx, (int)ny);
+                    // Hot core
+                    g2.setColor(new Color(200, 240, 255, a / 2));
+                    g2.setStroke(new BasicStroke(1.0f));
+                    g2.drawLine((int)cx, (int)cy, (int)nx, (int)ny);
+                    g2.setStroke(new BasicStroke(2.5f));
+                    cx = nx; cy = ny;
+                }
+            }
+            g2.setComposite(oldComp);
+            g2.setStroke(new BasicStroke(1.0f));
+
+            // "INITIATING HYPERSPACE" text
+            if (cinematicTimer > 120) {
+                double a2 = Math.min(1.0, (cinematicTimer - 120) / 60.0);
+                g2.setFont(new Font("Arial", Font.BOLD, 36));
+                FontMetrics fm = g2.getFontMetrics();
+                String text = "INITIATING HYPERSPACE...";
+                int tx = (WIDTH - fm.stringWidth(text)) / 2;
+                g2.setColor(new Color(180, 220, 255, (int)(255 * a2)));
+                g2.drawString(text, tx, HEIGHT / 2 + 200);
+            }
+            break;
+        }
+
+        case 3: // White flash + LEVEL COMPLETE
+        {
+            double flashAlpha;
+            if (cinematicTimer < 20) {
+                flashAlpha = cinematicTimer / 20.0;
+            } else if (cinematicTimer < 60) {
+                flashAlpha = 1.0;
+            } else {
+                flashAlpha = 1.0 - (cinematicTimer - 60) / 60.0;
+            }
+            g2.setColor(new Color(255, 255, 255, (int)(200 * Math.max(0, flashAlpha))));
+            g2.fillRect(0, 0, WIDTH, HEIGHT);
+
+            if (cinematicTimer > 30) {
+                double tAlpha = Math.min(1.0, (cinematicTimer - 30) / 30.0);
+                g2.setFont(new Font("Arial", Font.BOLD, 64));
+                FontMetrics fm = g2.getFontMetrics();
+                String text = "ENTERING LEVEL 2";
+                int tx = (WIDTH - fm.stringWidth(text)) / 2;
+                int ty = HEIGHT / 2;
+                g2.setColor(new Color(0, 0, 0, (int)(200 * tAlpha)));
+                g2.drawString(text, tx, ty);
+            }
+            break;
+        }
+
+        case 4: // Hyperspace tunnel
+        {
+            Composite oldComp = g2.getComposite();
+            // Radial streak lines from center
+            double intensity = Math.min(1.0, cinematicTimer / 60.0);
+            int numStreaks = 60;
+            g2.setStroke(new BasicStroke(2.0f));
+            for (int i = 0; i < numStreaks; i++) {
+                double ang = (i / (double)numStreaks) * Math.PI * 2;
+                double innerR = 20 + cinematicTimer * 1.5;
+                double outerR = innerR + 200 + cinematicTimer * 3;
+                int x1 = WIDTH / 2 + (int)(Math.cos(ang) * innerR);
+                int y1 = HEIGHT / 2 + (int)(Math.sin(ang) * innerR);
+                int x2 = WIDTH / 2 + (int)(Math.cos(ang) * outerR);
+                int y2 = HEIGHT / 2 + (int)(Math.sin(ang) * outerR);
+                int a = (int)(160 * intensity);
+                int blue = 200 + (int)(55 * Math.sin(i * 0.5 + cinematicTimer * 0.1));
+                g2.setColor(new Color(140, 180, Math.min(255, blue), a));
+                g2.drawLine(x1, y1, x2, y2);
+            }
+            g2.setComposite(oldComp);
+            g2.setStroke(new BasicStroke(1.0f));
+
+            // Vignette darken edges
+            double vAlpha = 0.5 + 0.3 * (cinematicTimer / 180.0);
+            g2.setColor(new Color(0, 0, 0, (int)(255 * Math.min(0.8, vAlpha))));
+            g2.fillRect(0, 0, WIDTH, 80);
+            g2.fillRect(0, HEIGHT - 80, WIDTH, 80);
+            break;
+        }
+
+        case 5: // Fade in to level 2
+        {
+            double fadeAlpha = 1.0 - (cinematicTimer / 90.0);
+            if (fadeAlpha > 0) {
+                g2.setColor(new Color(0, 0, 0, (int)(255 * Math.max(0, fadeAlpha))));
+                g2.fillRect(0, 0, WIDTH, HEIGHT);
+            }
+            // Level 2 title
+            if (cinematicTimer > 30) {
+                double tAlpha = Math.min(1.0, (cinematicTimer - 30) / 30.0) * Math.max(0, 1.0 - (cinematicTimer - 60) / 30.0);
+                if (tAlpha > 0) {
+                    g2.setFont(new Font("Arial", Font.BOLD, 48));
+                    FontMetrics fm = g2.getFontMetrics();
+                    String text = "LEVEL 2";
+                    int tx = (WIDTH - fm.stringWidth(text)) / 2;
+                    g2.setColor(new Color(180, 140, 255, (int)(255 * Math.max(0, tAlpha))));
+                    g2.drawString(text, tx, HEIGHT / 2);
+                }
+            }
+            break;
+        }
+    }
+}
+
+private void spawnLevel2Structures() {
+    spaceStructures.clear();
+    // Spawn 2-3 spiral galaxies and 1-2 square-wave galaxies
+    int spiralCount = 2 + rng.nextInt(2);
+    for (int i = 0; i < spiralCount; i++) {
+        double sx = 100 + rng.nextInt(WIDTH - 200);
+        double sy = -200 - rng.nextInt(400);
+        double svx = (rng.nextDouble() - 0.5) * 0.3;
+        double svy = 0.15 + rng.nextDouble() * 0.2;
+        spaceStructures.add(new SpaceStructure(sx, sy, SpaceStructure.Type.SPIRAL_GALAXY, svx, svy));
+    }
+    int squareCount = 1 + rng.nextInt(2);
+    for (int i = 0; i < squareCount; i++) {
+        double sx = 100 + rng.nextInt(WIDTH - 200);
+        double sy = -300 - rng.nextInt(400);
+        double svx = (rng.nextDouble() - 0.5) * 0.2;
+        double svy = 0.1 + rng.nextDouble() * 0.15;
+        spaceStructures.add(new SpaceStructure(sx, sy, SpaceStructure.Type.SQUARE_WAVE_GALAXY, svx, svy));
+    }
 }
 }

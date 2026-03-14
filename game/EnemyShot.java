@@ -47,7 +47,7 @@ public class EnemyShot {
         
         // Pulsing circular glow at projectile center
         double pulseIntensity = 0.5 + 0.5 * Math.sin(frameCounter * 0.3);
-        int glowSize = (int)(6 + 4 * pulseIntensity);
+        int glowSize = (int)(4 + 3 * pulseIntensity);
         g2.setColor(new Color(180, 80, 255, (int)(80 * pulseIntensity)));
         g2.fillOval(x0 - glowSize/2, y0 - glowSize/2, glowSize, glowSize);
         

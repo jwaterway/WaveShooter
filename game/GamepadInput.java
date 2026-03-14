@@ -14,32 +14,21 @@ public class GamepadInput {
     
     public GamepadInput() {
         try {
-            System.out.println("[GamepadInput] Java: " + System.getProperty("java.version") + " | OS: " + System.getProperty("os.name") + " " + System.getProperty("os.arch"));
-            System.out.println("[GamepadInput] Library path: " + System.getProperty("java.library.path"));
-            
             Controller[] controllers = ControllerEnvironment.getDefaultEnvironment().getControllers();
-            System.out.println("[GamepadInput] Found " + controllers.length + " controller(s)");
             
             for (int i = 0; i < controllers.length; i++) {
-                System.out.println("[GamepadInput]   [" + i + "] " + controllers[i].getName() + " (" + controllers[i].getType() + ")");
                 if (isGamepad(controllers[i])) {
                     this.gamepad = controllers[i];
                     this.available = true;
-                    System.out.println("[GamepadInput] ✓ Using: " + gamepad.getName());
-                    dumpComponents();
                     return;
                 }
             }
             
             this.available = false;
-            System.out.println("[GamepadInput] No suitable gamepad found. Keyboard/mouse only.");
             
         } catch (UnsatisfiedLinkError e) {
-            System.out.println("[GamepadInput] ERROR: Native DhookError - DLLs not loaded: " + e.getMessage());
             this.available = false;
         } catch (Exception e) {
-            System.out.println("[GamepadInput] Error: " + e.getMessage());
-            e.printStackTrace();
             this.available = false;
         }
     }
@@ -58,7 +47,6 @@ public class GamepadInput {
                     if (controllers != null && controllers.length > 0) {
                         for (Controller c : controllers) {
                             if (c != null && !isExcludedType(c)) {
-                                System.out.println("[GamepadInput] Alternative found: " + c.getName());
                                 gamepad = c;
                                 available = true;
                                 return;
@@ -134,7 +122,6 @@ public class GamepadInput {
             
             // If it has at least 2 analog axes and 1 button, it's probably a gamepad
             if (analogCount >= 2 && buttonCount >= 1) {
-                System.out.println("[GamepadInput]   -> Has " + analogCount + " analog, " + buttonCount + " buttons -> treated as gamepad");
                 return true;
             }
         } catch (Exception e) {
@@ -145,17 +132,8 @@ public class GamepadInput {
     }
 
     private void dumpComponents() {
-        if (gamepad == null) return;
-        Component[] comps = gamepad.getComponents();
-        System.out.println("[GamepadInput] --- Component dump (" + comps.length + " components) ---");
-        for (int i = 0; i < comps.length; i++) {
-            Component c = comps[i];
-            System.out.println("[GamepadInput]   [" + i + "] name=\"" + c.getName() + "\" id=" + c.getIdentifier() + " analog=" + c.isAnalog());
-        }
-        System.out.println("[GamepadInput] --- End dump ---");
+        // Debug method - no-op in production
     }
-
-    private int debugCounter = 0;
 
     /**
      * Poll gamepad state (must be called each frame)
@@ -163,21 +141,6 @@ public class GamepadInput {
     public void poll() {
         if (available && gamepad != null) {
             gamepad.poll();
-            
-            // Print active inputs every 60 frames (once per second)
-            debugCounter++;
-            if (debugCounter % 60 == 0) {
-                StringBuilder sb = new StringBuilder();
-                for (Component c : gamepad.getComponents()) {
-                    float v = c.getPollData();
-                    if (Math.abs(v) > 0.01f) {
-                        sb.append(c.getName()).append("=").append(String.format("%.2f", v)).append(" ");
-                    }
-                }
-                if (sb.length() > 0) {
-                    System.out.println("[GamepadInput] Active: " + sb.toString().trim());
-                }
-            }
         }
     }
     
