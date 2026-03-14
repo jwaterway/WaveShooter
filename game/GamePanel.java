@@ -34,6 +34,7 @@ public class GamePanel extends JPanel implements KeyListener {
 	ArrayList<SmokeParticle> smokes = new ArrayList<>();
 	ArrayList<SpaceStructure> spaceStructures = new ArrayList<>();
 	ArrayList<PhaseEnemy> phaseEnemies = new ArrayList<>();
+	DecoyField activeDecoy = null;  // deployed decoy that attracts missiles
 	double waveT = 0;
 	boolean wave1Active = false;
 	int waveNumber = 1;  // current wave number (progresses as enemies are cleared)
@@ -683,6 +684,9 @@ public class GamePanel extends JPanel implements KeyListener {
                     player.heal(25.0);
                 } else if (pu.getType() == PowerUp.Type.SHIELD) {
                     player.addForcefield();  // +10 sec, stacks
+                } else if (pu.getType() == PowerUp.Type.DECOY) {
+                    // Deploy decoy at player's current position
+                    activeDecoy = new DecoyField(player.getX(), player.getY());
                 } else if (pu.getType() == PowerUp.Type.WEAPON_BOOST) {
                     if (player.getVoltageLevel() < Player.MAX_VOLTAGE) {
                         player.addVoltage();
@@ -700,10 +704,28 @@ public class GamePanel extends JPanel implements KeyListener {
             boss.update(player.getX(), player.getY(), missiles);
         }
 
+        // Update decoy field
+        if (activeDecoy != null) {
+            activeDecoy.update();
+            if (!activeDecoy.isAlive()) {
+                // Decoy expired — electric burst
+                rings.add(new ParticleRing(activeDecoy.getX(), activeDecoy.getY(), 30));
+                for (int sp = 0; sp < 8; sp++) {
+                    double ang = (sp / 8.0) * Math.PI * 2;
+                    shards.add(new Shard(activeDecoy.getX(), activeDecoy.getY(), ang, 3.0, new Color(100, 220, 255), 1));
+                }
+                AudioManager.playSfx("explosion", 0.4f);
+                activeDecoy = null;
+            }
+        }
+
         // Update homing missiles and check player collision
+        // If decoy is active, missiles home toward the decoy instead
+        double missileTargetX = (activeDecoy != null) ? activeDecoy.getX() : player.getX();
+        double missileTargetY = (activeDecoy != null) ? activeDecoy.getY() : player.getY();
         for (int i = missiles.size() - 1; i >= 0; i--) {
             HomingMissile m = missiles.get(i);
-            m.update(player.getX(), player.getY());
+            m.update(missileTargetX, missileTargetY);
             if (!m.isAlive()) {
                 // Spawn explosion if missile expired naturally (fizzed out)
                 if (m.hasExpired()) {
@@ -740,6 +762,21 @@ public class GamePanel extends JPanel implements KeyListener {
                     }
                 }
                 missiles.remove(i);
+            }
+            // Missile ↔ Decoy collision — decoy absorbs missile with electric burst
+            else if (activeDecoy != null) {
+                double ddx = activeDecoy.getX() - m.getX();
+                double ddy = activeDecoy.getY() - m.getY();
+                double hitRD = activeDecoy.getRadius() + HomingMissile.RADIUS;
+                if (ddx * ddx + ddy * ddy <= hitRD * hitRD) {
+                    rings.add(new ParticleRing(m.getX(), m.getY(), 16));
+                    for (int sp = 0; sp < 8; sp++) {
+                        double sparkAngle = (sp / 8.0) * 2 * Math.PI;
+                        shards.add(new Shard(m.getX(), m.getY(), sparkAngle, 4.0, new Color(100, 220, 255), 1));
+                    }
+                    AudioManager.playSfx("explosion", 0.5f);
+                    missiles.remove(i);
+                }
             }
         }
 
@@ -884,6 +921,7 @@ public class GamePanel extends JPanel implements KeyListener {
                 enemyShots.clear();
                 missiles.clear();
                 asteroids.clear();
+                phaseEnemies.clear();
             } else {
                 waveNumber++;
                 spawnWave(waveNumber);
@@ -900,6 +938,8 @@ public class GamePanel extends JPanel implements KeyListener {
             projectiles.clear();
             missiles.clear();
             laserEnemies.clear();
+            phaseEnemies.clear();
+            activeDecoy = null;
             AudioManager.playSfx("explosion", 1.0f);
             AudioManager.playSfx("glassbreak", 1.0f);
             engineSound.setSpeedRatio(0);
@@ -1091,6 +1131,28 @@ public class GamePanel extends JPanel implements KeyListener {
                 laserEnemies.add(le);
             }
         }
+
+        // Level 2: Spawn phase enemies (teleporting enemies)
+        if (currentLevel >= 2) {
+            int phaseCount = Math.min(1 + wave / 2, 4);
+            double phaseHealth = 6.0 + wave * 2.0;
+            for (int i = 0; i < phaseCount; i++) {
+                double px = 100 + rng.nextInt(WIDTH - 200);
+                double py = 50 + rng.nextInt((int)(HEIGHT * 0.35));
+                phaseEnemies.add(new PhaseEnemy(px, py, phaseHealth, WIDTH, HEIGHT));
+            }
+        }
+
+        // Level 2: Spawn exotic space structures (spiral/square-wave galaxies) every few waves
+        if (currentLevel >= 2 && wave % 3 == 1) {
+            SpaceStructure.Type sType = (rng.nextBoolean()) ?
+                SpaceStructure.Type.SPIRAL_GALAXY : SpaceStructure.Type.SQUARE_WAVE_GALAXY;
+            double sx = 100 + rng.nextInt(WIDTH - 200);
+            double sy = -300;
+            double svx = (rng.nextDouble() - 0.5) * 0.2;
+            double svy = 0.1 + rng.nextDouble() * 0.15;
+            spaceStructures.add(new SpaceStructure(sx, sy, sType, svx, svy));
+        }
     }
     public static Point safeRandomPoint(int width, int height, java.util.List<BlackHole> holes) {
         final int margin = 20;
@@ -1163,7 +1225,6 @@ public class GamePanel extends JPanel implements KeyListener {
         // Draw space structures (exotic galaxies, background layer)
         for (SpaceStructure ss : structSnap) {
             ss.draw(g2);
-        }
         }
 
         for (Star s : starsSnap) {
@@ -1255,6 +1316,25 @@ public class GamePanel extends JPanel implements KeyListener {
             if (m.isAlive()) m.draw(g2);
         }
 
+        // Draw phase enemies
+        final ArrayList<PhaseEnemy> phaseSnap = new ArrayList<>(phaseEnemies);
+        for (PhaseEnemy pe : phaseSnap) {
+            if (pe.isAlive()) {
+                pe.draw(g2);
+                long timeSinceHit = System.currentTimeMillis() - pe.getLastHitTime();
+                if (timeSinceHit < 1500) {
+                    double pHealthRatio = pe.getHealth() / pe.getMaxHealth();
+                    double pFadeAlpha = Math.max(0, Math.min(1.0, 1.0 - (timeSinceHit - 500.0) / 1000.0));
+                    drawGradientHealthBar(g2, (int)pe.getX() - 14, (int)pe.getY() - 38, 28, 4, pHealthRatio, false, pFadeAlpha);
+                }
+            }
+        }
+
+        // Draw decoy field
+        if (activeDecoy != null && activeDecoy.isAlive()) {
+            activeDecoy.draw(g2);
+        }
+
         // ========== HUD TICK ==========
         hudTick++;
 
@@ -1325,7 +1405,7 @@ public class GamePanel extends JPanel implements KeyListener {
         {
             g2.setFont(new Font("Arial", Font.BOLD, 18));
             g2.setColor(new Color(180, 200, 220));
-            String waveStr = "WAVE " + waveNumber;
+            String waveStr = "L" + currentLevel + " WAVE " + waveNumber;
             g2.drawString(waveStr, barX, barY + barHeight + 82);
         }
 
@@ -1349,7 +1429,7 @@ public class GamePanel extends JPanel implements KeyListener {
         g2.drawString("FPS: " + String.format("%.0f", 1000 / frameMs)
             + "  avg: " + String.format("%.0f", fpsAvg2s)
             + "  low: " + String.format("%.0f", fpsMin2s), 20, statY); statY += statGap;
-        g2.drawString("Wave: " + waveNumber, 20, statY);
+        g2.drawString("Level: " + currentLevel + "  Wave: " + waveNumber, 20, statY);
         
         // Draw pause overlay if paused
         if (paused && !playerDead) {
@@ -1427,6 +1507,7 @@ public class GamePanel extends JPanel implements KeyListener {
             case KeyEvent.VK_X: player.addForcefield(); System.out.println("FORCEFIELD ADDED: " + player.getForcefieldTimer()); break; // DEBUG: toggle forcefield
             case KeyEvent.VK_F: player.addForcefield(); System.out.println("FORCEFIELD ADDED (F): " + player.getForcefieldTimer()); break; // DEBUG: alt key
             case KeyEvent.VK_W: skipWave(); break; // DEBUG: skip to next wave
+            case KeyEvent.VK_D: activeDecoy = new DecoyField(player.getX(), player.getY()); System.out.println("DECOY DEPLOYED"); break; // DEBUG: deploy decoy
         }
     }
 
@@ -1532,6 +1613,8 @@ private void restartGame() {
         nebulae.clear();
         laserEnemies.clear();
         spaceStructures.clear();
+        phaseEnemies.clear();
+        activeDecoy = null;
         boss = null;
         spawnWave(waveNumber);
     }
@@ -1542,6 +1625,7 @@ private void skipWave() {
     for (Enemy e : enemies) e.takeDamage(9999);
     if (boss != null) boss.takeDamage(9999);
     for (LaserEnemy le : laserEnemies) le.takeDamage(9999);
+    for (PhaseEnemy pe : phaseEnemies) pe.takeDamage(9999);
     System.out.println("SKIP WAVE -> next wave: " + (waveNumber + 1));
 }
 

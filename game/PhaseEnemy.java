@@ -72,10 +72,8 @@ public class PhaseEnemy {
                 burstCooldown--;
                 // Fire 3-round bursts
                 if (burstCooldown <= 0 && burstCount < 3) {
-                    double spd = 4.5;
                     shots.add(new EnemyShot(x + Math.cos(aimAngle) * radius,
-                        y + Math.sin(aimAngle) * radius,
-                        Math.cos(aimAngle) * spd, Math.sin(aimAngle) * spd));
+                        y + Math.sin(aimAngle) * radius, aimAngle));
                     burstCount++;
                     burstCooldown = 10;
                 }

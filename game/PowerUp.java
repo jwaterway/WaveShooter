@@ -10,7 +10,8 @@ public class PowerUp {
         WEAPON_SINE,     // powerup3 — green sine icon
         WEAPON_SQUARE,   // powerup4 — orange square icon
         WEAPON_TRIANGLE, // powerup5 — blue triangle icon
-        WEAPON_BOOST     // powerup6 — gold star burst
+        WEAPON_BOOST,    // powerup6 — gold star burst
+        DECOY            // powerup7 — electric decoy field
     }
 
     private double x, y;
@@ -141,6 +142,21 @@ public class PowerUp {
                 g2.drawLine(cx, cy + s / 2, cx - s / 2, cy);
                 g2.drawLine(cx - s / 2, cy, cx, cy - s / 2);
                 break;
+            case DECOY: // Hexagon with radiating arcs
+                Polygon dHex = new Polygon();
+                for (int i = 0; i < 6; i++) {
+                    double a = Math.PI / 6 + i * Math.PI / 3;
+                    dHex.addPoint(cx + (int)(s * 0.7 * Math.cos(a)), cy + (int)(s * 0.7 * Math.sin(a)));
+                }
+                g2.drawPolygon(dHex);
+                // Small lightning bolts outward
+                for (int i = 0; i < 3; i++) {
+                    double a = i * Math.PI * 2 / 3 + age * 0.08;
+                    int ex = cx + (int)(s * Math.cos(a));
+                    int ey = cy + (int)(s * Math.sin(a));
+                    g2.drawLine(cx + (int)(s * 0.5 * Math.cos(a)), cy + (int)(s * 0.5 * Math.sin(a)), ex, ey);
+                }
+                break;
         }
     }
 
@@ -152,6 +168,7 @@ public class PowerUp {
             case WEAPON_SQUARE:   return new Color(255, 160, 30);   // neon orange
             case WEAPON_TRIANGLE: return new Color(80, 140, 255);   // electric blue
             case WEAPON_BOOST:    return new Color(255, 220, 50);   // gold
+            case DECOY:           return new Color(100, 220, 255);  // electric cyan
             default:              return Color.WHITE;
         }
     }
