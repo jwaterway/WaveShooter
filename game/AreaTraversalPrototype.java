@@ -3,11 +3,17 @@ package game;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Font;
+import java.awt.GradientPaint;
 import java.awt.Graphics2D;
+import java.awt.Paint;
+import java.awt.Point;
 import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
+import java.util.Set;
 
 /**
  * Hidden prototype level controller for area-based traversal.
@@ -36,10 +42,14 @@ public class AreaTraversalPrototype {
     private final int screenWidth;
     private final int screenHeight;
     private final ArrayList<WorldMarker> markers = new ArrayList<>();
+    private final ArrayList<PrototypeEnemy> activeEnemies = new ArrayList<>();
+    private final Set<String> spawnedEnemyZones = new HashSet<>();
+    private final Random rng = new Random();
 
     private double worldForwardMeters;
     private double worldLateralMeters;
     private double forwardSpeedFactor = 1.0;
+    private double lateralScrollFactor = 0.0;
     private boolean slowedByBottomEdge;
     private boolean leftHeld;
     private boolean rightHeld;
@@ -71,6 +81,33 @@ public class AreaTraversalPrototype {
             this.color = color;
             this.blink = blink;
             this.collected = false;
+        }
+    }
+
+    private static class PrototypeEnemy {
+        final Enemy visual;
+        final double anchorLateralMeters;
+        final double anchorForwardMeters;
+        final double hoverPhase;
+        final double hoverAmpX;
+        final double hoverAmpY;
+
+        PrototypeEnemy(Enemy visual, double anchorLateralMeters, double anchorForwardMeters,
+                       double hoverPhase, double hoverAmpX, double hoverAmpY) {
+            this.visual = visual;
+            this.anchorLateralMeters = anchorLateralMeters;
+            this.anchorForwardMeters = anchorForwardMeters;
+            this.hoverPhase = hoverPhase;
+            this.hoverAmpX = hoverAmpX;
+            this.hoverAmpY = hoverAmpY;
+        }
+
+        double worldX(int tick) {
+            return anchorLateralMeters + Math.sin(tick * 0.018 + hoverPhase) * hoverAmpX;
+        }
+
+        double worldY(int tick) {
+            return anchorForwardMeters + Math.cos(tick * 0.015 + hoverPhase * 0.8) * hoverAmpY;
         }
     }
 
@@ -131,6 +168,7 @@ public class AreaTraversalPrototype {
         }
 
         double lateralIntent = getNormalizedLateralIntent(player);
+        lateralScrollFactor = lateralIntent;
         worldLateralMeters += lateralIntent * MAX_LATERAL_SPEED_MPS * deltaSeconds;
         if (worldLateralMeters > LATERAL_LIMIT_METERS) {
             worldLateralMeters = LATERAL_LIMIT_METERS;
@@ -145,6 +183,7 @@ public class AreaTraversalPrototype {
             worldForwardMeters = AREA_LENGTH_METERS;
         }
 
+        spawnEnemyZones(player);
         updateCollectibles(player);
     }
 
@@ -170,11 +209,19 @@ public class AreaTraversalPrototype {
     }
 
     public double getStarLateralDrift(Player player) {
-        return -getNormalizedLateralIntent(player) * 5.4;
+        return -lateralScrollFactor * 5.4;
     }
 
     public double getStarDriftMultiplier(Player player) {
         return 0.9 + forwardSpeedFactor * 0.8;
+    }
+
+    public int getForwardScrollPercent() {
+        return (int)Math.round(forwardSpeedFactor * 100.0);
+    }
+
+    public int getLateralScrollPercent() {
+        return (int)Math.round(lateralScrollFactor * 100.0);
     }
 
     public void drawOverlay(Graphics2D g2, Player player) {
@@ -197,12 +244,23 @@ public class AreaTraversalPrototype {
         Object oldAA = g2.getRenderingHint(RenderingHints.KEY_ANTIALIASING);
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
-        g2.setColor(new Color(0, 0, 0, 185));
+        g2.setColor(new Color(0, 0, 0, 210));
         g2.fillRect(0, 0, screenWidth, screenHeight);
 
-        g2.setColor(new Color(8, 16, 34, 232));
+        Paint oldPaint = g2.getPaint();
+        GradientPaint panelGradient = new GradientPaint(
+            panelX, panelY, new Color(8, 14, 38, 242),
+            panelX + panelW, panelY + panelH, new Color(12, 34, 68, 236));
+        g2.setPaint(panelGradient);
         g2.fillRoundRect(panelX, panelY, panelW, panelH, 28, 28);
-        g2.setColor(new Color(90, 180, 255, 90));
+        g2.setPaint(oldPaint);
+
+        for (int i = 5; i >= 1; i--) {
+            g2.setColor(new Color(70, 190, 255, 12 * i));
+            g2.setStroke(new BasicStroke(i * 2.2f));
+            g2.drawRoundRect(panelX - i, panelY - i, panelW + i * 2, panelH + i * 2, 28 + i * 2, 28 + i * 2);
+        }
+        g2.setColor(new Color(120, 220, 255, 110));
         g2.setStroke(new BasicStroke(2.0f));
         g2.drawRoundRect(panelX, panelY, panelW, panelH, 28, 28);
 
@@ -213,22 +271,42 @@ public class AreaTraversalPrototype {
         g2.setColor(new Color(120, 175, 215));
         g2.drawString("Prototype traversal sector view", panelX + 38, panelY + 74);
 
-        g2.setColor(new Color(6, 12, 24, 230));
+        GradientPaint mapGradient = new GradientPaint(
+            mapX, mapY, new Color(4, 10, 22, 238),
+            mapX, mapY + mapH, new Color(8, 28, 52, 230));
+        g2.setPaint(mapGradient);
         g2.fillRoundRect(mapX, mapY, mapW, mapH, 24, 24);
-        g2.setColor(new Color(80, 160, 230, 85));
+        g2.setPaint(oldPaint);
+        for (int i = 5; i >= 1; i--) {
+            g2.setColor(new Color(80, 210, 255, 10 * i));
+            g2.setStroke(new BasicStroke(i * 1.8f));
+            g2.drawRoundRect(mapX - i, mapY - i, mapW + i * 2, mapH + i * 2, 24 + i * 2, 24 + i * 2);
+        }
+        g2.setColor(new Color(100, 220, 255, 90));
+        g2.setStroke(new BasicStroke(1.8f));
         g2.drawRoundRect(mapX, mapY, mapW, mapH, 24, 24);
 
         for (int i = 1; i < 8; i++) {
             int gx = mapX + (mapW * i) / 8;
             int gy = mapY + (mapH * i) / 8;
-            g2.setColor(new Color(90, 150, 210, 22));
+            g2.setColor(new Color(90, 150, 210, 28));
             g2.drawLine(gx, mapY + 18, gx, mapY + mapH - 18);
             g2.drawLine(mapX + 18, gy, mapX + mapW - 18, gy);
         }
 
+        for (int i = 0; i < 16; i++) {
+            double tx = 0.5 + 0.46 * Math.sin(i * 2.173 + 0.8);
+            double ty = 0.5 + 0.44 * Math.cos(i * 1.471 + 1.6);
+            int sx = mapX + (int)Math.round(tx * (mapW - 56)) + 28;
+            int sy = mapY + (int)Math.round(ty * (mapH - 52)) + 26;
+            int size = (i % 3 == 0) ? 3 : 2;
+            g2.setColor(new Color(120, 220, 255, 32));
+            g2.fillOval(sx, sy, size, size);
+        }
+
         int laneLeftX = worldToMapX(-LATERAL_LIMIT_METERS, mapX, mapW);
         int laneRightX = worldToMapX(LATERAL_LIMIT_METERS, mapX, mapW);
-        g2.setColor(new Color(255, 120, 80, 40));
+        g2.setColor(new Color(255, 120, 80, 55));
         g2.fillRect(mapX + 18, mapY + 18, 14, mapH - 36);
         g2.fillRect(mapX + mapW - 32, mapY + 18, 14, mapH - 36);
         g2.setColor(new Color(255, 140, 90, 110));
@@ -240,9 +318,9 @@ public class AreaTraversalPrototype {
             int my = worldToMapY(marker.forwardMeters, mapY, mapH);
             switch (marker.kind) {
                 case ENEMY_ZONE:
-                    g2.setColor(new Color(255, 120, 80, 52));
+                    g2.setColor(new Color(255, 120, 80, 62));
                     g2.fillOval(mx - 42, my - 28, 84, 56);
-                    g2.setColor(new Color(255, 150, 110, 130));
+                    g2.setColor(new Color(255, 150, 110, 155));
                     g2.drawOval(mx - 42, my - 28, 84, 56);
                     break;
                 case DECOY:
@@ -270,6 +348,8 @@ public class AreaTraversalPrototype {
 
         int px = worldToMapX(playerWorldX, mapX, mapW);
         int py = worldToMapY(playerWorldY, mapY, mapH);
+        g2.setColor(new Color(90, 220, 255, 45));
+        g2.fillOval(px - 32, py - 32, 64, 64);
         g2.setColor(new Color(255, 255, 255, 230));
         g2.fillOval(px - 6, py - 6, 12, 12);
         g2.setColor(new Color(90, 220, 255, 220));
@@ -331,6 +411,18 @@ public class AreaTraversalPrototype {
             g2.drawString("DECOY", point.x - 20, point.y - 28);
         }
 
+        for (PrototypeEnemy enemy : activeEnemies) {
+            if (!enemy.visual.isAlive()) {
+                continue;
+            }
+            ScreenPoint point = getScreenPoint(enemy.worldX(tick), enemy.worldY(tick));
+            if (point == null) {
+                continue;
+            }
+            enemy.visual.setPosition(point.x, point.y);
+            enemy.visual.draw(g2);
+        }
+
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, oldAA);
     }
 
@@ -380,6 +472,11 @@ public class AreaTraversalPrototype {
 
         g2.setColor(new Color(4, 12, 24, 210));
         g2.fillOval(radarX, radarY, RADAR_SIZE, RADAR_SIZE);
+
+        g2.setColor(new Color(90, 220, 255, 18));
+        g2.fillOval(centerX - 32, centerY - 32, 64, 64);
+        g2.setColor(new Color(90, 220, 255, 28));
+        g2.fillOval(centerX - 22, centerY - 22, 44, 44);
 
         g2.setColor(new Color(70, 130, 200, 80));
         g2.setStroke(new BasicStroke(1.2f));
@@ -451,6 +548,47 @@ public class AreaTraversalPrototype {
         return marker.kind == MarkerKind.DECOY && !marker.collected;
     }
 
+    public void updatePrototypeEnemies(Player player, List<Projectile> projectiles, List<EnemyShot> enemyShots) {
+        if (player == null) {
+            return;
+        }
+
+        for (int i = activeEnemies.size() - 1; i >= 0; i--) {
+            PrototypeEnemy enemy = activeEnemies.get(i);
+            if (!enemy.visual.isAlive()) {
+                activeEnemies.remove(i);
+                continue;
+            }
+
+            ScreenPoint point = getScreenPoint(enemy.worldX(tick), enemy.worldY(tick));
+            if (point == null) {
+                continue;
+            }
+            enemy.visual.setPosition(point.x, point.y);
+            maybeFireEnemyShot(enemy, point, player, enemyShots);
+
+            for (int p = projectiles.size() - 1; p >= 0; p--) {
+                Projectile projectile = projectiles.get(p);
+                if (!projectile.isAlive()) {
+                    continue;
+                }
+                double dx = projectile.getX() - point.x;
+                double dy = projectile.getY() - point.y;
+                double hitRadius = projectile.getRadius() + enemy.visual.getRadius();
+                if (dx * dx + dy * dy > hitRadius * hitRadius) {
+                    continue;
+                }
+
+                enemy.visual.takeDamage(getProjectileDamage(projectile));
+                projectile.kill();
+                if (!enemy.visual.isAlive()) {
+                    AudioManager.playSfx("explosion", 0.8f);
+                    break;
+                }
+            }
+        }
+    }
+
     private void updateCollectibles(Player player) {
         for (WorldMarker marker : markers) {
             if (marker.kind != MarkerKind.DECOY || marker.collected) {
@@ -468,14 +606,18 @@ public class AreaTraversalPrototype {
     }
 
     private ScreenPoint getScreenPoint(WorldMarker marker, Player player) {
+        return getScreenPoint(marker.lateralMeters, marker.forwardMeters);
+    }
+
+    private ScreenPoint getScreenPoint(double markerWorldX, double markerWorldY) {
         double screenSideRange = RADAR_SIDE_RANGE_METERS * SCREEN_WINDOW_FROM_RADAR;
         double screenForwardRange = RADAR_FORWARD_RANGE_METERS * SCREEN_WINDOW_FROM_RADAR;
         double metersPerPixelLeft = screenSideRange / Math.max(1.0, screenWidth * VIEW_ANCHOR_X);
         double metersPerPixelRight = screenSideRange / Math.max(1.0, screenWidth * (1.0 - VIEW_ANCHOR_X));
         double metersPerPixelUp = screenForwardRange / Math.max(1.0, screenHeight * VIEW_ANCHOR_Y);
         double metersPerPixelDown = screenForwardRange / Math.max(1.0, screenHeight * (1.0 - VIEW_ANCHOR_Y));
-        double dx = marker.lateralMeters - worldLateralMeters;
-        double dy = marker.forwardMeters - worldForwardMeters;
+        double dx = markerWorldX - worldLateralMeters;
+        double dy = markerWorldY - worldForwardMeters;
         double anchorX = screenWidth * VIEW_ANCHOR_X;
         double anchorY = screenHeight * VIEW_ANCHOR_Y;
         double screenX = anchorX + (dx >= 0.0 ? dx / metersPerPixelRight : dx / metersPerPixelLeft);
@@ -536,20 +678,14 @@ public class AreaTraversalPrototype {
         }
         double minY = player.radius;
         double maxY = screenHeight - player.radius;
-        double topBandEnd = Math.min(maxY, minY + TOP_EDGE_THRESHOLD_PX);
-        if (player.getY() <= topBandEnd) {
-            double t = 1.0 - ((player.getY() - minY) / Math.max(1.0, topBandEnd - minY));
-            t = Math.max(0.0, Math.min(1.0, t));
-            double eased = t * t * (3.0 - 2.0 * t);
+        double centerY = (minY + maxY) * 0.5;
+        double normalized = (centerY - player.getY()) / Math.max(1.0, (maxY - minY) * 0.5);
+        double clamped = Math.max(-1.0, Math.min(1.0, normalized));
+        double abs = Math.abs(clamped);
+        double eased = abs * abs * (3.0 - 2.0 * abs);
+        if (clamped >= 0.0) {
             return 1.0 + eased * (TOP_EDGE_SPEED_FACTOR - 1.0);
         }
-        double slowZoneTop = Math.max(minY, maxY - BOTTOM_EDGE_THRESHOLD_PX);
-        if (player.getY() <= slowZoneTop) {
-            return 1.0;
-        }
-        double t = (player.getY() - slowZoneTop) / Math.max(1.0, maxY - slowZoneTop);
-        t = Math.max(0.0, Math.min(1.0, t));
-        double eased = t * t * (3.0 - 2.0 * t);
         return 1.0 - eased * (1.0 - BOTTOM_EDGE_SPEED_FACTOR);
     }
 
@@ -635,5 +771,67 @@ public class AreaTraversalPrototype {
         }
         return 0.12 + (Math.max(BOTTOM_EDGE_SPEED_FACTOR, forwardSpeedFactor) - BOTTOM_EDGE_SPEED_FACTOR)
             / Math.max(0.0001, 1.0 - BOTTOM_EDGE_SPEED_FACTOR) * 0.33;
+    }
+
+    private void spawnEnemyZones(Player player) {
+        double playerWorldY = playerWorldY(player);
+        for (WorldMarker marker : markers) {
+            if (marker.kind != MarkerKind.ENEMY_ZONE || spawnedEnemyZones.contains(marker.label)) {
+                continue;
+            }
+            if (Math.abs(marker.forwardMeters - playerWorldY) > 5_200.0) {
+                continue;
+            }
+            spawnedEnemyZones.add(marker.label);
+            int count = 6 + rng.nextInt(3);
+            for (int i = 0; i < count; i++) {
+                double spreadX = (i - (count - 1) / 2.0) * 650.0 + (rng.nextDouble() - 0.5) * 220.0;
+                double spreadY = (rng.nextDouble() - 0.5) * 900.0;
+                int radius = 18 + rng.nextInt(8);
+                double health = 18.0 + rng.nextDouble() * 8.0;
+                Enemy visual = new Enemy(0, 0, radius, health, i * 14.0, 1 + (i % 3));
+                activeEnemies.add(new PrototypeEnemy(
+                    visual,
+                    marker.lateralMeters + spreadX,
+                    marker.forwardMeters + spreadY,
+                    rng.nextDouble() * Math.PI * 2.0,
+                    120.0 + rng.nextDouble() * 180.0,
+                    70.0 + rng.nextDouble() * 120.0
+                ));
+            }
+        }
+    }
+
+    private double getProjectileDamage(Projectile projectile) {
+        double power = projectile.getOffsetAmt();
+        if (power <= 0.0) {
+            power = 1.0;
+        }
+        switch (projectile.getGunType()) {
+            case TRIANGLE:
+                return 1.6 * power;
+            case SQUARE:
+                return 1.0 * power;
+            case SINE:
+                return 0.65 * power;
+            default:
+                return 1.0 * power;
+        }
+    }
+
+    private void maybeFireEnemyShot(PrototypeEnemy enemy, ScreenPoint point, Player player, List<EnemyShot> enemyShots) {
+        if (enemyShots == null || !enemy.visual.canShoot()) {
+            return;
+        }
+        if ((tick + (int)Math.round(enemy.hoverPhase * 10.0)) % 30 != 0) {
+            return;
+        }
+
+        double aimAngle = Math.atan2(player.getY() - point.y, player.getX() - point.x);
+        enemy.visual.setGunAngle(aimAngle);
+        Point tip = enemy.visual.getGunTip();
+        enemyShots.add(new EnemyShot(tip.x, tip.y, aimAngle));
+        enemy.visual.incrementShots();
+        AudioManager.playSfx("enemyShoot", 0.45f);
     }
 }

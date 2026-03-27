@@ -371,6 +371,9 @@ public class GamePanel extends JPanel implements KeyListener {
     	if (right) { vx += 2; dx = 2; }
         if (isTraversalPrototypeActive()) {
             traversalPrototype.setInputState(left, right);
+            if (traversalPrototype.isAreaMapOpen()) {
+                return;
+            }
         }
 
     	if (player.spinAngle > Math.PI * 2) {
@@ -409,9 +412,6 @@ public class GamePanel extends JPanel implements KeyListener {
         engineSound.setSpeedRatio(player.getSpeed() / player.maxSpeed);
         engineSound.setVolume(AudioManager.getMasterVolume() * AudioManager.getSfxVolume() * 0.8f);
         if (isTraversalPrototypeActive()) {
-            if (traversalPrototype.isAreaMapOpen()) {
-                return;
-            }
             updateTraversalPrototype();
             return;
         }
@@ -1637,10 +1637,8 @@ public class GamePanel extends JPanel implements KeyListener {
             }
             g2.setFont(new Font("Consolas", Font.BOLD, 14));
             g2.setColor(gunColor);
-            g2.drawString("GUN: " + gunName, barX + 180, barY + barHeight + 82);
-
-            // Inventory indicators
             int invY = barY + barHeight + 98;
+            boolean hasInventory = player.getDecoyCount() > 0 || player.getGrenadeCount() > 0;
             if (player.getDecoyCount() > 0) {
                 g2.setColor(new Color(100, 220, 255));
                 g2.drawString("DECOY x" + player.getDecoyCount(), barX, invY);
@@ -1649,11 +1647,15 @@ public class GamePanel extends JPanel implements KeyListener {
                 g2.setColor(new Color(255, 140, 40));
                 g2.drawString("BOMB x" + player.getGrenadeCount(), barX + 100, invY);
             }
+            int gunY = hasInventory ? invY + 18 : barY + barHeight + 98;
+            g2.setColor(gunColor);
+            g2.drawString("GUN: " + gunName, barX, gunY);
         }
 
-        // ========== SPEED BAR ==========
+        // ========== SPEED BAR ========== 
         {
-            int sbY = barY + barHeight + 114;
+            int hudShift = (player.getDecoyCount() > 0 || player.getGrenadeCount() > 0) ? 18 : 0;
+            int sbY = barY + barHeight + 114 + hudShift;
             double speedRatio = player.getSpeedLevel() / (double)Player.MAX_SPEED_LEVEL;
             drawMiniBar(g2, "SPD", barX, sbY, 120, 10, speedRatio, new Color(80, 200, 255), new Color(40, 100, 180));
             // Speed level number
@@ -1662,9 +1664,10 @@ public class GamePanel extends JPanel implements KeyListener {
             g2.drawString("" + (player.getSpeedLevel() + 1) + "/10", barX + 126, sbY + 9);
         }
 
-        // ========== FREQUENCY BAR ==========
+        // ========== FREQUENCY BAR ========== 
         {
-            int fbY = barY + barHeight + 130;
+            int hudShift = (player.getDecoyCount() > 0 || player.getGrenadeCount() > 0) ? 18 : 0;
+            int fbY = barY + barHeight + 130 + hudShift;
             double freqRatio = player.getVoltageLevel() / (double)Player.MAX_VOLTAGE;
             drawMiniBar(g2, "FRQ", barX, fbY, 120, 10, freqRatio, new Color(255, 160, 40), new Color(180, 80, 20));
             g2.setFont(new Font("Consolas", Font.PLAIN, 11));
@@ -1674,10 +1677,11 @@ public class GamePanel extends JPanel implements KeyListener {
 
         // ========== VOLUME SLIDERS ==========
         {
+            int hudShift = (player.getDecoyCount() > 0 || player.getGrenadeCount() > 0) ? 18 : 0;
             int slTrackX = barX + 55;
             int slTrackW = barWidth - 55;
             int slH = 8;
-            int sfxSlY = barY + barHeight + 150;
+            int sfxSlY = barY + barHeight + 150 + hudShift;
             int musSlY = sfxSlY + 22;
             drawVolumeSlider(g2, "SFX", barX, sfxSlY, slTrackX, slTrackW, slH, AudioManager.getSfxVolume());
             drawVolumeSlider(g2, "MUSIC", barX, musSlY, slTrackX, slTrackW, slH, AudioManager.getMusicVolume());
@@ -1693,6 +1697,11 @@ public class GamePanel extends JPanel implements KeyListener {
             + "  avg: " + String.format("%.0f", fpsAvg2s)
             + "  low: " + String.format("%.0f", fpsMin2s), 20, statY); statY += statGap;
         g2.drawString("Level: " + currentLevel + "  Wave: " + waveNumber, 20, statY);
+        if (isTraversalPrototypeActive()) {
+            statY += statGap;
+            g2.drawString("Scroll X: " + traversalPrototype.getLateralScrollPercent()
+                + "%  Y: " + traversalPrototype.getForwardScrollPercent() + "%", 20, statY);
+        }
         
         // Draw pause overlay if paused
         if (paused && !playerDead) {
@@ -2390,8 +2399,45 @@ private void updateTraversalPrototype() {
         if (!smokes.get(i).isAlive()) smokes.remove(i);
     }
 
+    for (int i = projectiles.size() - 1; i >= 0; i--) {
+        if (!projectiles.get(i).isAlive()) {
+            projectiles.remove(i);
+        }
+    }
+
     double deltaSeconds = Math.max(0.001, frameMs / 1000.0);
     traversalPrototype.update(player, deltaSeconds);
+    traversalPrototype.updatePrototypeEnemies(player, projectiles, enemyShots);
+
+    for (int i = enemyShots.size() - 1; i >= 0; i--) {
+        EnemyShot s = enemyShots.get(i);
+        s.update();
+        if (!s.isAlive()) { enemyShots.remove(i); continue; }
+
+        if (s.shouldSpawnSpark()) {
+            double sparkAngle = Math.random() * Math.PI * 2;
+            shards.add(new Shard(s.getX(), s.getY(), sparkAngle, 0.5, new Color(200, 150, 255), 1));
+        }
+
+        double dxP = player.getX() - s.getX();
+        double dyP = player.getY() - s.getY();
+        double hitR = player.radius + s.getRadius();
+        if (dxP * dxP + dyP * dyP <= hitR * hitR) {
+            if (player.hasForcefield()) {
+                spawnForcefieldAbsorb(s.getX(), s.getY());
+            } else {
+                player.takeDamage(10.0);
+                player.applyKnockback(dxP, dyP, 5.0);
+                AudioManager.playSfx("playerhit");
+                for (int spark = 0; spark < 6; spark++) {
+                    double sparkAngle = (spark / 6.0) * 2 * Math.PI;
+                    shards.add(new Shard(s.getX(), s.getY(), sparkAngle, 7.0, new Color(255, 100, 200), 1));
+                }
+                rings.add(new ParticleRing(s.getX(), s.getY(), 10));
+            }
+            enemyShots.remove(i);
+        }
+    }
 }
 
 /** Draw a compact labelled bar for speed/frequency. */

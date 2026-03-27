@@ -20,8 +20,10 @@ is proven to work.
 
 ## Edge Speed Rules
 
-- Top of screen boosts forward flow gradually up to `200%`.
-- Bottom of screen slows forward flow gradually down to `25%`.
+- Forward flow now follows the same centered easing idea as lateral scroll.
+- The middle of the screen is `100%` forward flow.
+- The top half eases upward from `100%` to `200%`.
+- The bottom half eases downward from `100%` to `25%`.
 - The slowdown and boost should feel smooth, not binary.
 - Prototype movement should not bounce off screen edges.
 - While pinned to an edge, continuing to push outward may be used to reinforce
@@ -33,6 +35,7 @@ is proven to work.
 - Radar center represents the player's absolute position in the area.
 - Radar shows a broader local neighborhood than the visible playfield.
 - On-screen visibility corresponds roughly to the inner rings of radar range.
+- The inner on-screen coverage zone is now highlighted on the radar.
 - The heading line and radar shader should reflect current movement direction.
 - The heading line is intentionally short and subtle.
 - The radar shader should always reflect forward flow, even at neutral center.
@@ -50,8 +53,11 @@ is proven to work.
 - Two special decoy items exist in the prototype area.
 - These are optional collectibles, not required to finish the level.
 - Enemy clusters, a boss zone, and an exit void are represented as world locations.
+- Prototype enemy clusters now spawn from area-based enemy zones.
+- Those prototype enemies are world-anchored, can be hit, and can fire enemy shots.
 - Current prototype focus is traversal, radar, area map, and world-coordinate consistency.
-- Real prototype enemies will be added after the spatial model feels correct.
+- Next likely step is giving prototype enemies relative movement patterns while
+  keeping them anchored to area/world coordinates.
 
 ## Replay / Progression Direction
 
@@ -80,6 +86,14 @@ is proven to work.
 
 - From the overworld map, press `T` to launch the hidden traversal prototype.
 - In the traversal prototype, press `A` on keyboard to toggle the paused area map.
+
+## Current Prototype Status
+
+- The HUD gun label now dynamically avoids inventory overlap.
+- The area map now freezes the prototype correctly when opened.
+- The area map visual treatment has been pushed toward a stronger neon look.
+- The left debug HUD now shows prototype scroll percentages for `X` and `Y`.
+- Enemy movement felt promising in testing, but still needs authored movement patterns.
 
 ## Notes
 
