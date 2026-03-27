@@ -35,6 +35,21 @@ public class GamePanel extends JPanel implements KeyListener {
 	ArrayList<SpaceStructure> spaceStructures = new ArrayList<>();
 	ArrayList<PhaseEnemy> phaseEnemies = new ArrayList<>();
 	DecoyField activeDecoy = null;  // deployed decoy that attracts missiles
+	ArrayList<DeployedGrenade> deployedGrenades = new ArrayList<>();  // blinking grenades
+	// Overworld map
+	boolean showingMap = true;       // start on the map screen
+	OverworldMap overworldMap = new OverworldMap();
+	// Screen shake
+	private int shakeTimer = 0;
+	private double shakeIntensity = 0;
+	// Mega grenade flash
+	private int grenadeFlashTimer = 0;
+	// Satellite boss (level 2)
+	SatelliteBoss satelliteBoss = null;
+	// Moon background (level 3)
+	MoonBackground moonBackground = null;
+	// Camera for scrolling levels
+	Camera camera = new Camera(WIDTH, HEIGHT);
 	double waveT = 0;
 	boolean wave1Active = false;
 	int waveNumber = 1;  // current wave number (progresses as enemies are cleared)
@@ -91,6 +106,11 @@ public class GamePanel extends JPanel implements KeyListener {
     boolean gpSwitchPrev;  // edge detection for gun cycling
     boolean gpStartPrev;   // edge detection for pause toggle
     boolean gpBackPrev;    // edge detection for quit
+    boolean gpYPrev;       // edge detection for decoy deploy
+    boolean gpXPrev;       // edge detection for grenade deploy
+    // Gamepad map navigation edge detection
+    int gpMapDirXPrev;     // previous D-pad X direction for map
+    int gpMapDirYPrev;     // previous D-pad Y direction for map
     // Volume slider state
     private boolean draggingSfxSlider = false;
     private boolean draggingMusicSlider = false;
@@ -98,8 +118,8 @@ public class GamePanel extends JPanel implements KeyListener {
     private EngineSound engineSound = new EngineSound();
     private static final int SL_TRACK_X = WIDTH - 280 - 30 + 55;
     private static final int SL_TRACK_W = 225;
-    private static final int SL_SFX_Y = 52 + 22 + 38;
-    private static final int SL_MUSIC_Y = 52 + 22 + 38 + 22;
+    private static final int SL_SFX_Y = 52 + 22 + 150;   // must match drawing Y
+    private static final int SL_MUSIC_Y = 52 + 22 + 150 + 22;
     private static final int SL_H = 8;
     private static final int SL_HIT_PAD = 10;
     public GamePanel() {
@@ -125,7 +145,7 @@ public class GamePanel extends JPanel implements KeyListener {
   
         player = new Player(WIDTH / 2, HEIGHT / 2, 40);
         engineSound.start();
-        spawnWave(waveNumber);
+        // Don't spawn wave yet — player starts on the map
         for (int i = 0; i < NUMBEROFSTARS; i++) {  // number of stars
             stars.add(new Star(WIDTH, HEIGHT, Math.random()+.2)); 
             }
@@ -274,6 +294,26 @@ public class GamePanel extends JPanel implements KeyListener {
     	    }
     	    gpBackPrev = backNow;
     	    
+    	    // Y = deploy decoy (edge detection)
+    	    boolean yNow = gamepadInput.isYPressed();
+    	    if (yNow && !gpYPrev && !showingMap) {
+    	        if (activeDecoy == null && player.useDecoy()) {
+    	            activeDecoy = new DecoyField(player.getX(), player.getY());
+    	            AudioManager.playSfx("powerup7", 0.8f);
+    	        }
+    	    }
+    	    gpYPrev = yNow;
+    	    
+    	    // X = deploy grenade (edge detection)
+    	    boolean xNow = gamepadInput.isXPressed();
+    	    if (xNow && !gpXPrev && !showingMap) {
+    	        if (player.useGrenade()) {
+    	            deployedGrenades.add(new DeployedGrenade(player.getX(), player.getY()));
+    	            AudioManager.playSfx("powerup8", 0.8f);
+    	        }
+    	    }
+    	    gpXPrev = xNow;
+    	    
     	    // Triggers for gun angle rotation
     	    float lt = gamepadInput.getLeftTrigger();
     	    float rt = gamepadInput.getRightTrigger();
@@ -290,6 +330,27 @@ public class GamePanel extends JPanel implements KeyListener {
     	
     	if (paused) return;  // Skip update when paused
     	if (playerDead) return;
+
+    	// Screen shake / grenade flash timers (run even during cinematic)
+    	if (shakeTimer > 0) { shakeTimer--; shakeIntensity *= 0.92; }
+    	if (grenadeFlashTimer > 0) grenadeFlashTimer--;
+
+    	// Overworld map update
+    	if (showingMap) {
+    	    // Gamepad D-pad map navigation (edge detection)
+    	    if (gpMoveX > 0 && gpMapDirXPrev <= 0) overworldMap.navigate(1);
+    	    if (gpMoveX < 0 && gpMapDirXPrev >= 0) overworldMap.navigate(-1);
+    	    if (gpMoveY > 0 && gpMapDirYPrev <= 0) overworldMap.navigateVertical(1);
+    	    if (gpMoveY < 0 && gpMapDirYPrev >= 0) overworldMap.navigateVertical(-1);
+    	    gpMapDirXPrev = (int) gpMoveX;
+    	    gpMapDirYPrev = (int) gpMoveY;
+    	    // Gamepad A = launch selected level
+    	    if (gpFire && !gpSwitchPrev) {
+    	        launchSelectedLevel();
+    	    }
+    	    overworldMap.update();
+    	    return;
+    	}
 
     	// Level-complete cinematic update
     	if (cinematicPhase > 0) {
@@ -311,9 +372,19 @@ public class GamePanel extends JPanel implements KeyListener {
     	    player.spinAngle -= Math.PI * 2; // keep it bounded
     	}
     	for (Star s : new ArrayList<>(stars)) {
+    	    // When camera is enabled, stars drift laterally based on player position
+    	    if (camera.isEnabled()) {
+    	        double screenCenter = WIDTH / 2.0;
+    	        double offset = (player.getX() - screenCenter) / screenCenter; // -1..+1
+    	        s.setLateralDrift(-offset * 5.0); // stars drift opposite to player
+    	    } else {
+    	        s.setLateralDrift(0);
+    	    }
     	    s.update(WIDTH, HEIGHT);
     	    s.updateWithBlackHoles(blackHoles);
     	}
+    	if (moonBackground != null) moonBackground.update();
+    	camera.update(player.getX(), player.getY());
     	if (nPressed) player.angle += 1; // speed to taste
     	if (bPressed) player.angle -= 1;
     	player.updateMovement(up, down, left, right);
@@ -685,14 +756,25 @@ public class GamePanel extends JPanel implements KeyListener {
                 } else if (pu.getType() == PowerUp.Type.SHIELD) {
                     player.addForcefield();  // +10 sec, stacks
                 } else if (pu.getType() == PowerUp.Type.DECOY) {
-                    // Deploy decoy at player's current position
-                    activeDecoy = new DecoyField(player.getX(), player.getY());
+                    // Add decoy charge to inventory
+                    player.addDecoy();
+                } else if (pu.getType() == PowerUp.Type.GRENADE) {
+                    // Add grenade charge to inventory
+                    player.addGrenade();
                 } else if (pu.getType() == PowerUp.Type.WEAPON_BOOST) {
                     if (player.getVoltageLevel() < Player.MAX_VOLTAGE) {
                         player.addVoltage();
                         // Recalculate fire interval: 100ms → 20ms over MAX_VOLTAGE steps
                         fireIntervalMs = 100.0 - (80.0 * player.getVoltageLevel() / Player.MAX_VOLTAGE);
                     }
+                } else if (pu.getType() == PowerUp.Type.SPEED) {
+                    player.increaseSpeed();
+                } else if (pu.getType() == PowerUp.Type.WEAPON_SINE) {
+                    player.setGun(Player.GunType.SINE);
+                } else if (pu.getType() == PowerUp.Type.WEAPON_SQUARE) {
+                    player.setGun(Player.GunType.SQUARE);
+                } else if (pu.getType() == PowerUp.Type.WEAPON_TRIANGLE) {
+                    player.setGun(Player.GunType.TRIANGLE);
                 }
                 rings.add(new ParticleRing(pu.getX(), pu.getY(), 16));
                 powerUps.remove(i);
@@ -717,6 +799,16 @@ public class GamePanel extends JPanel implements KeyListener {
                 AudioManager.playSfx("explosion", 0.4f);
                 activeDecoy = null;
             }
+        }
+
+        // Update deployed grenades (blinking fuse → detonate)
+        for (int i = deployedGrenades.size() - 1; i >= 0; i--) {
+            DeployedGrenade dg = deployedGrenades.get(i);
+            if (dg.update()) {
+                // Fuse expired — detonate at grenade position
+                detonateMegaGrenade(dg.getX(), dg.getY());
+            }
+            if (!dg.isAlive()) deployedGrenades.remove(i);
         }
 
         // Update homing missiles and check player collision
@@ -904,6 +996,43 @@ public class GamePanel extends JPanel implements KeyListener {
             }
         }
 
+        // Update satellite boss
+        if (satelliteBoss != null && satelliteBoss.isAlive()) {
+            satelliteBoss.update(player.getX(), player.getY(), missiles, enemyShots);
+            // Satellite laser ↔ player collision
+            if (satelliteBoss.isInLaserBeam(player.getX(), player.getY(), player.radius)) {
+                if (player.hasForcefield()) {
+                    if (rng.nextInt(8) == 0) spawnForcefieldAbsorb(player.getX(), player.getY());
+                } else {
+                    player.takeDamage(0.6);
+                    if (rng.nextInt(10) == 0) {
+                        AudioManager.playSfx("playerhit");
+                        rings.add(new ParticleRing(player.getX(), player.getY(), 8));
+                    }
+                }
+            }
+        }
+
+        // Projectile ↔ Satellite Boss collision
+        if (satelliteBoss != null && satelliteBoss.isAlive()) {
+            for (int i = projectiles.size() - 1; i >= 0; i--) {
+                Projectile p = projectiles.get(i);
+                if (!p.isAlive()) continue;
+                if (satelliteBoss.damageAt(p.getX(), p.getY(), getProjectileDamage(p))) {
+                    rings.add(new ParticleRing(p.getX(), p.getY(), 8));
+                    switch (p.getGunType()) {
+                        case TRIANGLE: p.kill(); break;
+                        case SQUARE: p.kill(); break;
+                        case SINE: p.incrementPierce(); if (p.getPierceCount() >= 3) p.kill(); break;
+                    }
+                    if (!satelliteBoss.isAlive()) {
+                        spawnBossExplosion(satelliteBoss.getX(), satelliteBoss.getY(), 120);
+                        player.score += 1000;
+                    }
+                }
+            }
+        }
+
         // Wave progression: if all enemies dead (and boss dead/absent), spawn next wave
         boolean anyAlive = false;
         for (Enemy e : enemies) { if (e.isAlive()) { anyAlive = true; break; } }
@@ -912,7 +1041,8 @@ public class GamePanel extends JPanel implements KeyListener {
         for (LaserEnemy le : laserEnemies) { if (le.isAlive()) { laserAlive = true; break; } }
         boolean phaseAlive = false;
         for (PhaseEnemy pe : phaseEnemies) { if (pe.isAlive()) { phaseAlive = true; break; } }
-        if (!anyAlive && !bossAlive && !laserAlive && !phaseAlive && !playerDead && enemies.size() > 0) {
+        boolean satBossAlive = (satelliteBoss != null && satelliteBoss.isAlive() && waveNumber >= 10);
+        if (!anyAlive && !bossAlive && !laserAlive && !phaseAlive && !satBossAlive && !playerDead && enemies.size() > 0) {
             if (waveNumber >= 10 && cinematicPhase == 0) {
                 // Level complete — start cinematic
                 cinematicPhase = 1;
@@ -944,29 +1074,35 @@ public class GamePanel extends JPanel implements KeyListener {
             AudioManager.playSfx("glassbreak", 1.0f);
             engineSound.setSpeedRatio(0);
         }
+        // Cap particle rings to prevent GPU-melting gradient spam
+        while (rings.size() > 15) rings.remove(0);
         for (int i = rings.size() - 1; i >= 0; i--) {
             ParticleRing r = rings.get(i);
             r.update();
             if (!r.isAlive()) rings.remove(i);
         }
-        // update shards
+        // update shards (capped to prevent runaway growth)
         for (int i = shards.size() - 1; i >= 0; i--) {
             Shard s = shards.get(i);
             s.update();
-            // Check if shard should split into smaller fragments
+            // Check if shard should split — only if under cap
             if (s.shouldSplit()) {
                 s.markSplitDone();
-                // Spawn 4 smaller shards around the parent in random directions
-                for (int j = 0; j < 4; j++) {
-                    double angle = Math.random() * 2 * Math.PI;  // Random direction
-                    Shard child = new Shard(s.getX(), s.getY(), angle, 6.0, new Color(255, 180, 50), 1);
-                    shards.add(child);
+                if (shards.size() < 200) {
+                    for (int j = 0; j < 4; j++) {
+                        double angle = Math.random() * 2 * Math.PI;
+                        Shard child = new Shard(s.getX(), s.getY(), angle, 6.0, new Color(255, 180, 50), 1);
+                        shards.add(child);
+                    }
                 }
-                rings.add(new ParticleRing(s.getX(), s.getY(), 12));
+                if (rings.size() < 15) {
+                    rings.add(new ParticleRing(s.getX(), s.getY(), 12));
+                }
             }
             if (!s.isAlive()) shards.remove(i);
         }
-        // update smoke
+        // update smoke (capped)
+        while (smokes.size() > 80) smokes.remove(0);
         for (int i = smokes.size() - 1; i >= 0; i--) {
             SmokeParticle sp = smokes.get(i);
             sp.update();
@@ -1153,6 +1289,19 @@ public class GamePanel extends JPanel implements KeyListener {
             double svy = 0.1 + rng.nextDouble() * 0.15;
             spaceStructures.add(new SpaceStructure(sx, sy, sType, svx, svy));
         }
+
+        // Level 2: Satellite boss — approaches each wave, becomes final boss at wave 10
+        if (currentLevel >= 2) {
+            if (satelliteBoss == null || !satelliteBoss.isAlive()) {
+                double armHp = 20.0 + wave * 5.0;
+                double coreHp = 60.0 + wave * 10.0;
+                satelliteBoss = new SatelliteBoss(WIDTH / 2.0, -250, armHp, coreHp);
+            }
+            // Each wave the boss drifts closer; by wave 10 it's in the fight zone
+            double approachY = -200 + wave * 40;  // wave 1→-160, wave 10→200
+            if (wave >= 10) approachY = 220;  // final boss position
+            satelliteBoss.setTargetY(approachY);
+        }
     }
     public static Point safeRandomPoint(int width, int height, java.util.List<BlackHole> holes) {
         final int margin = 20;
@@ -1201,6 +1350,14 @@ public class GamePanel extends JPanel implements KeyListener {
         super.paintComponent(g);
         Graphics2D g2 = (Graphics2D) g;
 
+        // Screen shake
+        java.awt.geom.AffineTransform origTransform = g2.getTransform();
+        if (shakeTimer > 0) {
+            double sx = (rng.nextDouble() - 0.5) * 2 * shakeIntensity;
+            double sy = (rng.nextDouble() - 0.5) * 2 * shakeIntensity;
+            g2.translate(sx, sy);
+        }
+
         final ArrayList<Star> starsSnap         = new ArrayList<>(stars);
         final ArrayList<Projectile> projsSnap   = new ArrayList<>(projectiles);
         final ArrayList<BlackHole> holesSnap    = new ArrayList<>(blackHoles);
@@ -1217,24 +1374,50 @@ public class GamePanel extends JPanel implements KeyListener {
         final ArrayList<SpaceStructure> structSnap = new ArrayList<>(spaceStructures);
         final BossEnemy bossSnap = boss;
 
-        // Draw nebulae behind everything (atmospheric background layer)
+        // Draw nebulae behind everything — parallax at 50% camera speed
+        if (camera.isEnabled()) {
+            g2.translate(-camera.getX() * 0.5, -camera.getY() * 0.5);
+        }
         for (Nebula n : nebulaeSnap) {
             n.draw(g2);
         }
-
-        // Draw space structures (exotic galaxies, background layer)
-        for (SpaceStructure ss : structSnap) {
-            ss.draw(g2);
+        if (camera.isEnabled()) {
+            g2.translate(camera.getX() * 0.5, camera.getY() * 0.5);
         }
 
+        // Draw moon background for level 3 (behind stars)
+        if (moonBackground != null) {
+            moonBackground.draw(g2);
+        }
+
+        // Stars are screen-relative (parallax) — no camera offset
         for (Star s : starsSnap) {
             s.draw(g2, holesSnap);
         }
 
-        // Draw asteroids
+        // Draw space structures — parallax at 80% camera speed
+        if (camera.isEnabled()) {
+            g2.translate(-camera.getX() * 0.8, -camera.getY() * 0.8);
+        }
+        for (SpaceStructure ss : structSnap) {
+            ss.draw(g2);
+        }
+        if (camera.isEnabled()) {
+            g2.translate(camera.getX() * 0.8, camera.getY() * 0.8);
+        }
+
+        // Draw asteroids — parallax at 100% camera speed (full scroll)
+        if (camera.isEnabled()) {
+            g2.translate(-camera.getX() * 1.0, -camera.getY() * 1.0);
+        }
         for (Asteroid a : asteroidsSnap) {
             a.draw(g2);
         }
+        if (camera.isEnabled()) {
+            g2.translate(camera.getX() * 1.0, camera.getY() * 1.0);
+        }
+
+        // ---- Gameplay layer (screen-space, no camera offset) ----
 
         // Draw player only if alive
         if (!playerDead) {
@@ -1285,6 +1468,11 @@ public class GamePanel extends JPanel implements KeyListener {
             if (pu.isAlive()) pu.draw(g2);
         }
 
+        // Draw satellite boss
+        if (satelliteBoss != null && satelliteBoss.isAlive()) {
+            satelliteBoss.draw(g2);
+        }
+
         // Draw boss
         if (bossSnap != null && bossSnap.isAlive()) {
             bossSnap.draw(g2);
@@ -1333,6 +1521,11 @@ public class GamePanel extends JPanel implements KeyListener {
         // Draw decoy field
         if (activeDecoy != null && activeDecoy.isAlive()) {
             activeDecoy.draw(g2);
+        }
+
+        // Draw deployed grenades (blinking)
+        for (DeployedGrenade dg : deployedGrenades) {
+            dg.draw(g2);
         }
 
         // ========== HUD TICK ==========
@@ -1401,12 +1594,58 @@ public class GamePanel extends JPanel implements KeyListener {
             drawForcefieldIndicator(g2, barX, ffY, barWidth);
         }
 
-        // ========== WAVE BADGE (left of health bar) ==========
+        // ========== WAVE BADGE + LEVEL NAME + GUN TYPE ==========
         {
             g2.setFont(new Font("Arial", Font.BOLD, 18));
             g2.setColor(new Color(180, 200, 220));
-            String waveStr = "L" + currentLevel + " WAVE " + waveNumber;
+            String levelName = getLevelName(currentLevel);
+            String waveStr = levelName + " - WAVE " + waveNumber;
             g2.drawString(waveStr, barX, barY + barHeight + 82);
+
+            // Gun type indicator
+            String gunName = player.getGun().name();
+            Color gunColor;
+            switch (player.getGun()) {
+                case TRIANGLE: gunColor = new Color(255, 80, 40); break;
+                case SQUARE:   gunColor = new Color(40, 160, 255); break;
+                case SINE:     gunColor = new Color(80, 255, 120); break;
+                default:       gunColor = Color.WHITE; break;
+            }
+            g2.setFont(new Font("Consolas", Font.BOLD, 14));
+            g2.setColor(gunColor);
+            g2.drawString("GUN: " + gunName, barX + 180, barY + barHeight + 82);
+
+            // Inventory indicators
+            int invY = barY + barHeight + 98;
+            if (player.getDecoyCount() > 0) {
+                g2.setColor(new Color(100, 220, 255));
+                g2.drawString("DECOY x" + player.getDecoyCount(), barX, invY);
+            }
+            if (player.getGrenadeCount() > 0) {
+                g2.setColor(new Color(255, 140, 40));
+                g2.drawString("BOMB x" + player.getGrenadeCount(), barX + 100, invY);
+            }
+        }
+
+        // ========== SPEED BAR ==========
+        {
+            int sbY = barY + barHeight + 114;
+            double speedRatio = player.getSpeedLevel() / (double)Player.MAX_SPEED_LEVEL;
+            drawMiniBar(g2, "SPD", barX, sbY, 120, 10, speedRatio, new Color(80, 200, 255), new Color(40, 100, 180));
+            // Speed level number
+            g2.setFont(new Font("Consolas", Font.PLAIN, 11));
+            g2.setColor(new Color(120, 200, 255));
+            g2.drawString("" + (player.getSpeedLevel() + 1) + "/10", barX + 126, sbY + 9);
+        }
+
+        // ========== FREQUENCY BAR ==========
+        {
+            int fbY = barY + barHeight + 130;
+            double freqRatio = player.getVoltageLevel() / (double)Player.MAX_VOLTAGE;
+            drawMiniBar(g2, "FRQ", barX, fbY, 120, 10, freqRatio, new Color(255, 160, 40), new Color(180, 80, 20));
+            g2.setFont(new Font("Consolas", Font.PLAIN, 11));
+            g2.setColor(new Color(255, 180, 80));
+            g2.drawString("" + (player.getVoltageLevel() + 1) + "/" + (Player.MAX_VOLTAGE + 1), barX + 126, fbY + 9);
         }
 
         // ========== VOLUME SLIDERS ==========
@@ -1414,7 +1653,7 @@ public class GamePanel extends JPanel implements KeyListener {
             int slTrackX = barX + 55;
             int slTrackW = barWidth - 55;
             int slH = 8;
-            int sfxSlY = barY + barHeight + 100;
+            int sfxSlY = barY + barHeight + 150;
             int musSlY = sfxSlY + 22;
             drawVolumeSlider(g2, "SFX", barX, sfxSlY, slTrackX, slTrackW, slH, AudioManager.getSfxVolume());
             drawVolumeSlider(g2, "MUSIC", barX, musSlY, slTrackX, slTrackW, slH, AudioManager.getMusicVolume());
@@ -1474,9 +1713,24 @@ public class GamePanel extends JPanel implements KeyListener {
             g2.drawString(optionsText, x, y + 150);
         }
 
+        // Grenade flash overlay
+        if (grenadeFlashTimer > 0) {
+            float flashAlpha = Math.min(1f, grenadeFlashTimer / 15f);
+            g2.setColor(new Color(255, 240, 200, (int)(180 * flashAlpha)));
+            g2.fillRect(-50, -50, WIDTH + 100, HEIGHT + 100);
+        }
+
+        // Reset screen shake transform
+        g2.setTransform(origTransform);
+
         // Draw cinematic overlay
         if (cinematicPhase > 0) {
             drawCinematic(g2);
+        }
+
+        // Draw overworld map (full-screen overlay)
+        if (showingMap) {
+            overworldMap.draw(g2);
         }
     }
 
@@ -1504,10 +1758,61 @@ public class GamePanel extends JPanel implements KeyListener {
             case KeyEvent.VK_1: player.setGun(Player.GunType.TRIANGLE); break;
             case KeyEvent.VK_2: player.setGun(Player.GunType.SQUARE);   break;
             case KeyEvent.VK_3: player.setGun(Player.GunType.SINE);     break;
-            case KeyEvent.VK_X: player.addForcefield(); System.out.println("FORCEFIELD ADDED: " + player.getForcefieldTimer()); break; // DEBUG: toggle forcefield
+            case KeyEvent.VK_X:
+                // Deploy grenade from inventory
+                if (player.useGrenade()) {
+                    deployedGrenades.add(new DeployedGrenade(player.getX(), player.getY()));
+                    AudioManager.playSfx("powerup8", 0.8f);
+                }
+                // Activate forcefield
+                player.addForcefield();
+                break;
             case KeyEvent.VK_F: player.addForcefield(); System.out.println("FORCEFIELD ADDED (F): " + player.getForcefieldTimer()); break; // DEBUG: alt key
             case KeyEvent.VK_W: skipWave(); break; // DEBUG: skip to next wave
             case KeyEvent.VK_D: activeDecoy = new DecoyField(player.getX(), player.getY()); System.out.println("DECOY DEPLOYED"); break; // DEBUG: deploy decoy
+            case KeyEvent.VK_L: debugCycleLevel(); break; // DEBUG: cycle through levels
+            case KeyEvent.VK_ALT:
+                // Deploy decoy from inventory
+                if (activeDecoy == null && player.useDecoy()) {
+                    activeDecoy = new DecoyField(player.getX(), player.getY());
+                    AudioManager.playSfx("powerup7", 0.8f);
+                }
+                break;
+            case KeyEvent.VK_M:
+                if (!playerDead && cinematicPhase == 0) {
+                    showingMap = !showingMap;
+                    if (showingMap) overworldMap.resetIntro();
+                }
+                break;
+            case KeyEvent.VK_SPACE:
+            case KeyEvent.VK_ENTER:
+                if (showingMap && overworldMap.isSelectedUnlocked()) {
+                    launchSelectedLevel();
+                }
+                break;
+            case KeyEvent.VK_ESCAPE:
+                if (showingMap && wave1Active) {
+                    showingMap = false;  // return to game in progress
+                }
+                break;
+        }
+
+        // Map navigation when map is open
+        if (showingMap) {
+            switch (e.getKeyCode()) {
+                case KeyEvent.VK_RIGHT:
+                    overworldMap.navigate(1);
+                    break;
+                case KeyEvent.VK_LEFT:
+                    overworldMap.navigate(-1);
+                    break;
+                case KeyEvent.VK_UP:
+                    overworldMap.navigateVertical(-1);
+                    break;
+                case KeyEvent.VK_DOWN:
+                    overworldMap.navigateVertical(1);
+                    break;
+            }
         }
     }
 
@@ -1616,8 +1921,51 @@ private void restartGame() {
         phaseEnemies.clear();
         activeDecoy = null;
         boss = null;
-        spawnWave(waveNumber);
+        satelliteBoss = null;
+        moonBackground = null;
+        camera.setEnabled(false);
+        camera.reset();
+        deployedGrenades.clear();
+        wave1Active = false;
+        // Return to map instead of spawning immediately
+        showingMap = true;
+        overworldMap = new OverworldMap();
+        overworldMap.resetIntro();
     }
+
+/** Launch the level selected on the overworld map. */
+private void launchSelectedLevel() {
+    currentLevel = overworldMap.getSelectedLevel();
+    waveNumber = 1;
+    showingMap = false;
+    cinematicPhase = 0;
+    cinematicTimer = 0;
+    // Clear all game objects for fresh level
+    projectiles.clear();
+    enemies.clear();
+    enemyShots.clear();
+    rings.clear();
+    shards.clear();
+    smokes.clear();
+    blackHoles.clear();
+    powerUps.clear();
+    missiles.clear();
+    asteroids.clear();
+    nebulae.clear();
+    laserEnemies.clear();
+    spaceStructures.clear();
+    phaseEnemies.clear();
+    activeDecoy = null;
+    boss = null;
+    satelliteBoss = null;
+    moonBackground = (currentLevel == 3) ? new MoonBackground(WIDTH, HEIGHT) : null;
+    // Enable camera scrolling for levels >= 2 (level 1 stays arena-style)
+    camera.reset();
+    camera.setEnabled(currentLevel >= 2);
+    deployedGrenades.clear();
+    player = new Player(WIDTH / 2, HEIGHT / 2, 40);
+    spawnWave(waveNumber);
+}
 
 /** DEBUG: skip current wave by killing all enemies. */
 private void skipWave() {
@@ -1626,7 +1974,99 @@ private void skipWave() {
     if (boss != null) boss.takeDamage(9999);
     for (LaserEnemy le : laserEnemies) le.takeDamage(9999);
     for (PhaseEnemy pe : phaseEnemies) pe.takeDamage(9999);
+    if (satelliteBoss != null) satelliteBoss.damageAllArms(9999);
     System.out.println("SKIP WAVE -> next wave: " + (waveNumber + 1));
+}
+
+/** DEBUG: cycle through levels 1-6 instantly for testing. */
+private void debugCycleLevel() {
+    if (playerDead) return;
+    int nextLevel = (currentLevel % 6) + 1;
+    currentLevel = nextLevel;
+    waveNumber = 1;
+    cinematicPhase = 0;
+    cinematicTimer = 0;
+    projectiles.clear();
+    enemies.clear();
+    enemyShots.clear();
+    rings.clear();
+    shards.clear();
+    smokes.clear();
+    blackHoles.clear();
+    powerUps.clear();
+    missiles.clear();
+    asteroids.clear();
+    nebulae.clear();
+    laserEnemies.clear();
+    spaceStructures.clear();
+    phaseEnemies.clear();
+    activeDecoy = null;
+    boss = null;
+    satelliteBoss = null;
+    moonBackground = (currentLevel == 3) ? new MoonBackground(WIDTH, HEIGHT) : null;
+    camera.reset();
+    camera.setEnabled(currentLevel >= 2);
+    deployedGrenades.clear();
+    player = new Player(WIDTH / 2, HEIGHT / 2, 40);
+    spawnWave(waveNumber);
+    System.out.println("DEBUG LEVEL SWITCH -> Level " + currentLevel + " (" + getLevelName(currentLevel) + ") camera=" + camera.isEnabled());
+}
+
+/** Detonate mega grenade at a specific position: screen shake + flash + damage all enemies. */
+private void detonateMegaGrenade(double gx, double gy) {
+    shakeTimer = 45;       // 0.75 sec shake
+    shakeIntensity = 20;
+    grenadeFlashTimer = 30; // 0.5 sec flash
+
+    AudioManager.playSfx("explosion", 1.0f);
+    AudioManager.playSfx("glassbreak", 1.0f);
+
+    // Big rings from detonation point
+    for (int i = 0; i < 5; i++) {
+        rings.add(new ParticleRing(gx, gy, 40 + i * 30));
+    }
+    // Shards in all directions
+    for (int i = 0; i < 30; i++) {
+        double ang = rng.nextDouble() * Math.PI * 2;
+        double spd = 3 + rng.nextDouble() * 8;
+        shards.add(new Shard(gx, gy, ang, spd, new Color(255, 200, 60)));
+    }
+
+    // Damage all enemies (30 damage) and spawn explosions for kills
+    double grenadeDmg = 30;
+    for (Enemy e : enemies) {
+        if (e.isAlive()) {
+            e.takeDamage(grenadeDmg);
+            if (!e.isAlive()) spawnEnemyExplosion(e.getX(), e.getY(), e.getRadius(), Player.GunType.TRIANGLE);
+        }
+    }
+    if (boss != null && boss.isAlive()) {
+        boss.takeDamage(grenadeDmg);
+        if (!boss.isAlive()) spawnBossExplosion(boss.getX(), boss.getY(), boss.getRadius());
+    }
+    for (LaserEnemy le : laserEnemies) {
+        if (le.isAlive()) {
+            le.takeDamage(grenadeDmg);
+            if (!le.isAlive()) {
+                rings.add(new ParticleRing(le.getX(), le.getY(), le.getRadius() + 8));
+                AudioManager.playSfx("explosion");
+                player.score += 150;
+            }
+        }
+    }
+    for (PhaseEnemy pe : phaseEnemies) {
+        if (pe.isAlive()) {
+            pe.takeDamage(grenadeDmg);
+            if (!pe.isAlive()) {
+                rings.add(new ParticleRing(pe.getX(), pe.getY(), pe.getRadius() + 10));
+                AudioManager.playSfx("explosion");
+                player.score += 200;
+            }
+        }
+    }
+    if (satelliteBoss != null && satelliteBoss.isAlive()) {
+        satelliteBoss.damageAllArms(grenadeDmg);
+    }
 }
 
 private void spawnPlayerExplosion(double x, double y, int radius) {
@@ -1818,6 +2258,46 @@ private void drawFancyHealthBar(Graphics2D g2, int x, int y, int width, int heig
     g2.drawString(pctStr, textX + 1, textY + 1);
     g2.setColor(new Color(220, 240, 255, 220));
     g2.drawString(pctStr, textX, textY);
+}
+
+/** Get the display name for a level number. */
+private String getLevelName(int level) {
+    switch (level) {
+        case 1: return "NEXUS GATE";
+        case 2: return "PLASMA DRIFT";
+        case 3: return "VOID STATION";
+        case 4: return "NEON ABYSS";
+        case 5: return "SIGNAL PRIME";
+        case 6: return "OMEGA CORE";
+        default: return "SECTOR " + level;
+    }
+}
+
+/** Draw a compact labelled bar for speed/frequency. */
+private void drawMiniBar(Graphics2D g2, String label, int x, int y, int w, int h,
+                          double ratio, Color fillColor, Color bgColor) {
+    ratio = Math.max(0, Math.min(1, ratio));
+    // Label
+    g2.setFont(new Font("Consolas", Font.BOLD, 11));
+    g2.setColor(new Color(160, 180, 200));
+    g2.drawString(label, x, y + h - 1);
+    int barX = x + 30;
+    int barW = w - 30;
+    // Background
+    g2.setColor(bgColor.darker().darker());
+    g2.fillRoundRect(barX, y, barW, h, 4, 4);
+    // Fill
+    g2.setColor(fillColor);
+    g2.fillRoundRect(barX, y, (int)(barW * ratio), h, 4, 4);
+    // Border
+    g2.setColor(new Color(fillColor.getRed(), fillColor.getGreen(), fillColor.getBlue(), 100));
+    g2.drawRoundRect(barX, y, barW, h, 4, 4);
+    // Tick marks
+    g2.setColor(new Color(0, 0, 0, 60));
+    for (int i = 1; i < 10; i++) {
+        int tx = barX + (barW * i) / 10;
+        g2.drawLine(tx, y, tx, y + h);
+    }
 }
 
 private void drawVolumeSlider(Graphics2D g2, String label, int labelX, int y, int trackX, int trackW, int h, float value) {
@@ -2083,7 +2563,7 @@ private void updateCinematic() {
             }
             break;
 
-        case 5: // Fade in to level 2
+        case 5: // Fade in — then return to map with next level unlocked
             // Reset star speed
             for (Star s : stars) {
                 double t = cinematicTimer / 90.0;
@@ -2093,7 +2573,10 @@ private void updateCinematic() {
                 cinematicPhase = 0;
                 cinematicTimer = 0;
                 for (Star s : stars) s.setDriftMultiplier(1.0);
-                spawnWave(waveNumber);
+                // Unlock the next level on the map and show it
+                overworldMap.unlockLevel(currentLevel);
+                showingMap = true;
+                overworldMap.resetIntro();
             }
             break;
     }

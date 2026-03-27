@@ -66,6 +66,31 @@ public class Player {
     /** Max voltage level (maps 100ms → 20ms in 5 steps of 16ms). */
     public static final int MAX_VOLTAGE = 5;
 
+    // Decoy charges (collected as powerup, deployed with Alt/Y)
+    private int decoyCount = 0;
+    public int getDecoyCount() { return decoyCount; }
+    public void addDecoy() { decoyCount++; }
+    public boolean useDecoy() { if (decoyCount > 0) { decoyCount--; return true; } return false; }
+
+    // Grenade charges (collected as powerup, deployed with X button)
+    private int grenadeCount = 0;
+    public int getGrenadeCount() { return grenadeCount; }
+    public void addGrenade() { grenadeCount++; }
+    public boolean useGrenade() { if (grenadeCount > 0) { grenadeCount--; return true; } return false; }
+
+    // Speed level (0-9, 10 levels). 0 = half base speed, 9 = 3x base speed
+    private int speedLevel = 4;  // start in middle (~1x)
+    public static final int MAX_SPEED_LEVEL = 9;
+    public int getSpeedLevel() { return speedLevel; }
+    public void setSpeedLevel(int level) { speedLevel = Math.max(0, Math.min(MAX_SPEED_LEVEL, level)); updateSpeedFromLevel(); }
+    public void increaseSpeed() { if (speedLevel < MAX_SPEED_LEVEL) { speedLevel++; updateSpeedFromLevel(); } }
+    public void decreaseSpeed() { if (speedLevel > 0) { speedLevel--; updateSpeedFromLevel(); } }
+    private void updateSpeedFromLevel() {
+        // Level 0 = 0.5x, Level 9 = 3.0x, linear interpolation
+        double mult = 0.5 + (speedLevel / (double) MAX_SPEED_LEVEL) * 2.5;
+        setSpeedMultiplier(mult);
+    }
+
     public double getHealth() { return health; }
     public void takeDamage(double amt) {
         health -= amt;

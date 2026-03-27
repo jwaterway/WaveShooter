@@ -11,7 +11,9 @@ public class PowerUp {
         WEAPON_SQUARE,   // powerup4 — orange square icon
         WEAPON_TRIANGLE, // powerup5 — blue triangle icon
         WEAPON_BOOST,    // powerup6 — gold star burst
-        DECOY            // powerup7 — electric decoy field
+        DECOY,           // powerup7 — electric decoy field
+        GRENADE,         // powerup8 — mega grenade
+        SPEED            // powerup9 — speed boost
     }
 
     private double x, y;
@@ -157,6 +159,22 @@ public class PowerUp {
                     g2.drawLine(cx + (int)(s * 0.5 * Math.cos(a)), cy + (int)(s * 0.5 * Math.sin(a)), ex, ey);
                 }
                 break;
+            case GRENADE: // Circular bomb with fuse
+                g2.drawOval(cx - s / 2, cy - s / 3, s, (int)(s * 0.7));
+                g2.drawLine(cx, cy - s / 3, cx + s / 3, cy - s + 2);
+                // Spark at fuse tip
+                g2.setColor(new Color(255, 220, 60));
+                g2.fillOval(cx + s / 3 - 2, cy - s, 5, 5);
+                break;
+            case SPEED: // Arrow pointing right (speed boost)
+                // Right-pointing arrow
+                g2.drawLine(cx - s, cy, cx + s / 2, cy);
+                g2.drawLine(cx + s / 2, cy, cx, cy - s / 2);
+                g2.drawLine(cx + s / 2, cy, cx, cy + s / 2);
+                // Speed lines
+                g2.drawLine(cx - s + 2, cy - s / 3, cx - s / 3, cy - s / 3);
+                g2.drawLine(cx - s + 2, cy + s / 3, cx - s / 3, cy + s / 3);
+                break;
         }
     }
 
@@ -169,6 +187,8 @@ public class PowerUp {
             case WEAPON_TRIANGLE: return new Color(80, 140, 255);   // electric blue
             case WEAPON_BOOST:    return new Color(255, 220, 50);   // gold
             case DECOY:           return new Color(100, 220, 255);  // electric cyan
+            case GRENADE:         return new Color(255, 100, 40);   // fiery orange
+            case SPEED:           return new Color(40, 255, 200);   // teal/speed
             default:              return Color.WHITE;
         }
     }

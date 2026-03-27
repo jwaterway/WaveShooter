@@ -15,8 +15,10 @@ public class Star {
     private double twinklePhase;
     private double twinkleSpeed;
     private double driftMultiplier = 1.0;
+    private double lateralDrift = 0.0;  // horizontal drift (camera-driven)
 
     public void setDriftMultiplier(double m) { this.driftMultiplier = m; }
+    public void setLateralDrift(double d) { this.lateralDrift = d; }
 
     public Star(int width, int height, double speed) {
         this.worldW = width;
@@ -75,6 +77,9 @@ public class Star {
         // Fixed drift: stars scroll downward at speed-based rate
         double driftSpeed = 2.5 * driftMultiplier;
         y += speed * driftSpeed;
+
+        // Lateral drift: horizontal scrolling from camera
+        x += lateralDrift * speed;
 
         // Wrap with margin
         final int margin = 20;

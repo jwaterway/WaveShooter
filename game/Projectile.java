@@ -5,9 +5,10 @@ import java.awt.geom.Point2D;
 import java.awt.RadialGradientPaint;
 
 public class Projectile {
-    double x, y;                 // current position
-    int size = 10;               // size of projectile
-    double dx, dy, radius = 6;   // velocity + collision radius
+    double x, y;                 // current position (on wave path)
+    double baseX, baseY;         // straight-line base position
+    int size = 6;                // size of projectile
+    double dx, dy, radius = 4;   // velocity + collision radius
     double speed;                // stored speed
     double traveled = 0;         // distance traveled along path
 
@@ -39,6 +40,8 @@ public class Projectile {
     public Projectile(double x, double y, double angle, Player.GunType gun, double offsetAmt) {
         this.x = x;
         this.y = y;
+        this.baseX = x;
+        this.baseY = y;
         this.angle = angle;
         this.offsetAmt = offsetAmt;
         this.gunType = gun;
@@ -70,6 +73,8 @@ public class Projectile {
     public Projectile(double x, double y, double vx, double vy, double radius, Player.GunType gun) {
         this.x = x;
         this.y = y;
+        this.baseX = x;
+        this.baseY = y;
         this.dx = vx;
         this.dy = vy;
         this.radius = radius;
@@ -103,9 +108,36 @@ public class Projectile {
     }
 
     public void update() {
-        x += dx;
-        y += dy;
+        baseX += dx;
+        baseY += dy;
         traveled += speed;
+
+        // Ball follows the wave path
+        double offset = computeWaveOffset(0);
+        x = baseX + offset * Math.cos(angle + Math.PI / 2.0);
+        y = baseY + offset * Math.sin(angle + Math.PI / 2.0);
+    }
+
+    private double computeWaveOffset(double distBack) {
+        switch (type) {
+            case "TRIANGLE": {
+                double s = traveled * 0.15 - distBack * 0.22;
+                double triVal = (2.0 / Math.PI) * Math.asin(Math.sin(s));
+                return triVal * offsetAmt * 7.0;
+            }
+            case "SQUARE": {
+                double s = traveled * 0.25 - distBack * 0.22;
+                double squareVal = (Math.sin(s) >= 0) ? 1.0 : -1.0;
+                return squareVal * offsetAmt * 5.0;
+            }
+            case "SINE": {
+                double freq = Math.max(0.12, offsetAmt * 0.15);
+                double s = traveled * 0.25 - distBack * freq;
+                return Math.sin(s) * (10.0 + offsetAmt * 4.0);
+            }
+            default:
+                return 0;
+        }
     }
 
     /**
@@ -135,7 +167,7 @@ public class Projectile {
      */
     private void drawTipGlow(Graphics2D g2) {
         // pulse radius based on travelled distance for simple animation
-        float baseRadius = 12f;
+        float baseRadius = 10f;
         float pulse = (float)(Math.sin(traveled * 0.3) * 2.0); // ±2 pixels
         float radius = baseRadius + pulse;
 
@@ -155,7 +187,7 @@ public class Projectile {
     }
 
     public boolean isOffscreen(int width, int height) {
-        return x < -50 || x > width + 50 || y < -50 || y > height + 50;
+        return baseX < -50 || baseX > width + 50 || baseY < -50 || baseY > height + 50;
     }
 
     public void draw(Graphics2D g2) {
@@ -196,18 +228,13 @@ public class Projectile {
         for (int i = 0; i < count; i++) {
             double distBack = i * spacing;
 
-            double px = x - distBack * Math.cos(angle);
-            double py = y - distBack * Math.sin(angle);
+            double px = baseX - distBack * Math.cos(angle);
+            double py = baseY - distBack * Math.sin(angle);
 
             double s = traveled * animSpeed - distBack * freq;
             double triVal = (2.0 / Math.PI) * Math.asin(Math.sin(s));
 
             double offset = triVal * amp;
-
-            // keep very front centered
-            if (i == 0) {
-                offset = 0;
-            }
 
             double ox = offset * Math.cos(angle + Math.PI / 2.0);
             double oy = offset * Math.sin(angle + Math.PI / 2.0);
@@ -247,16 +274,12 @@ public class Projectile {
         for (int i = 0; i < count; i++) {
             double distBack = i * spacing;
 
-            double px = x - distBack * Math.cos(angle);
-            double py = y - distBack * Math.sin(angle);
+            double px = baseX - distBack * Math.cos(angle);
+            double py = baseY - distBack * Math.sin(angle);
 
             double s = traveled * animSpeed - distBack * freq;
             double squareVal = (Math.sin(s) >= 0) ? 1.0 : -1.0;
             double offset = squareVal * amp;
-
-            if (i == 0) {
-                offset = 0;
-            }
 
             double ox = offset * Math.cos(angle + Math.PI / 2.0);
             double oy = offset * Math.sin(angle + Math.PI / 2.0);
@@ -298,15 +321,11 @@ public class Projectile {
         for (int i = 0; i < count; i++) {
             double distBack = i * spacing;
 
-            double px = x - distBack * Math.cos(angle);
-            double py = y - distBack * Math.sin(angle);
+            double px = baseX - distBack * Math.cos(angle);
+            double py = baseY - distBack * Math.sin(angle);
 
             double s = traveled * animSpeed - distBack * freq;
             double offset = Math.sin(s) * amp;
-
-            if (i == 0) {
-                offset = 0;
-            }
 
             double ox = offset * Math.cos(angle + Math.PI / 2.0);
             double oy = offset * Math.sin(angle + Math.PI / 2.0);
