@@ -207,6 +207,49 @@ public class Player {
         }
     }
 
+    public void updateMovementNoBounce(boolean up, boolean down, boolean left, boolean right) {
+        ax = 0;
+        ay = 0;
+
+        if (up)    ay -= accel;
+        if (down)  ay += accel;
+        if (left)  ax -= accel;
+        if (right) ax += accel;
+
+        vx += ax;
+        vy += ay;
+
+        double speed = Math.sqrt(vx * vx + vy * vy);
+        double effectiveMax = maxSpeed * speedMultiplier;
+        if (speed > effectiveMax) {
+            vx = (vx / speed) * effectiveMax;
+            vy = (vy / speed) * effectiveMax;
+        }
+
+        vx *= friction;
+        vy *= friction;
+
+        x += vx;
+        y += vy;
+
+        if (x - radius < 0) {
+            x = radius;
+            vx = 0;
+        }
+        if (x + radius > GamePanel.WIDTH) {
+            x = GamePanel.WIDTH - radius;
+            vx = 0;
+        }
+        if (y - radius < 0) {
+            y = radius;
+            vy = 0;
+        }
+        if (y + radius > GamePanel.HEIGHT) {
+            y = GamePanel.HEIGHT - radius;
+            vy = 0;
+        }
+    }
+
     public void update() {
         double spinSpeed = offsetAmt * 0.05;
         spinAngle += spinSpeed;

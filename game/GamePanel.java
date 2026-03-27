@@ -39,6 +39,7 @@ public class GamePanel extends JPanel implements KeyListener {
 	// Overworld map
 	boolean showingMap = true;       // start on the map screen
 	OverworldMap overworldMap = new OverworldMap();
+	AreaTraversalPrototype traversalPrototype = null;
 	// Screen shake
 	private int shakeTimer = 0;
 	private double shakeIntensity = 0;
@@ -54,6 +55,7 @@ public class GamePanel extends JPanel implements KeyListener {
 	boolean wave1Active = false;
 	int waveNumber = 1;  // current wave number (progresses as enemies are cleared)
 	int currentLevel = 1;
+	private static final int TRAVERSAL_PROTOTYPE_LEVEL = 99;
 	// Level-complete cinematic state machine
 	int cinematicPhase = 0;   // 0 = normal play, 1-5 = cinematic stages
 	int cinematicTimer = 0;   // frame counter within current phase
@@ -367,18 +369,26 @@ public class GamePanel extends JPanel implements KeyListener {
     	if (down)  { vy += 2; dy = 2; }
     	if (left)  { vx -= 2; dx = -2; }
     	if (right) { vx += 2; dx = 2; }
+        if (isTraversalPrototypeActive()) {
+            traversalPrototype.setInputState(left, right);
+        }
 
     	if (player.spinAngle > Math.PI * 2) {
     	    player.spinAngle -= Math.PI * 2; // keep it bounded
     	}
     	for (Star s : new ArrayList<>(stars)) {
-    	    // When camera is enabled, stars drift laterally based on player position
-    	    if (camera.isEnabled()) {
+    	    if (isTraversalPrototypeActive()) {
+    	        s.setLateralDrift(traversalPrototype.getStarLateralDrift(player));
+    	        s.setDriftMultiplier(traversalPrototype.getStarDriftMultiplier(player));
+    	    } else if (camera.isEnabled()) {
+    	        // When camera is enabled, stars drift laterally based on player position
     	        double screenCenter = WIDTH / 2.0;
     	        double offset = (player.getX() - screenCenter) / screenCenter; // -1..+1
     	        s.setLateralDrift(-offset * 5.0); // stars drift opposite to player
+    	        s.setDriftMultiplier(1.0);
     	    } else {
     	        s.setLateralDrift(0);
+    	        s.setDriftMultiplier(1.0);
     	    }
     	    s.update(WIDTH, HEIGHT);
     	    s.updateWithBlackHoles(blackHoles);
@@ -387,13 +397,24 @@ public class GamePanel extends JPanel implements KeyListener {
     	camera.update(player.getX(), player.getY());
     	if (nPressed) player.angle += 1; // speed to taste
     	if (bPressed) player.angle -= 1;
-    	player.updateMovement(up, down, left, right);
+        if (isTraversalPrototypeActive()) {
+            player.updateMovementNoBounce(up, down, left, right);
+        } else {
+            player.updateMovement(up, down, left, right);
+        }
         player.update(); // for spin
         player.updateForcefield();
         player.fireFlash *= 0.9;  // decay firing flash
         if (player.fireFlash < 0.01) player.fireFlash = 0;
         engineSound.setSpeedRatio(player.getSpeed() / player.maxSpeed);
         engineSound.setVolume(AudioManager.getMasterVolume() * AudioManager.getSfxVolume() * 0.8f);
+        if (isTraversalPrototypeActive()) {
+            if (traversalPrototype.isAreaMapOpen()) {
+                return;
+            }
+            updateTraversalPrototype();
+            return;
+        }
        /* for (int i = 0; i < projectiles.size(); i++) {
             Projectile p = projectiles.get(i);
             p.update();
@@ -1467,6 +1488,9 @@ public class GamePanel extends JPanel implements KeyListener {
         for (PowerUp pu : powerUpsSnap) {
             if (pu.isAlive()) pu.draw(g2);
         }
+        if (isTraversalPrototypeActive()) {
+            traversalPrototype.drawWorldObjects(g2, player);
+        }
 
         // Draw satellite boss
         if (satelliteBoss != null && satelliteBoss.isAlive()) {
@@ -1732,6 +1756,12 @@ public class GamePanel extends JPanel implements KeyListener {
         if (showingMap) {
             overworldMap.draw(g2);
         }
+        if (isTraversalPrototypeActive()) {
+            traversalPrototype.drawOverlay(g2, player);
+            if (traversalPrototype.isAreaMapOpen()) {
+                traversalPrototype.drawAreaMap(g2, player);
+            }
+        }
     }
 
     // Input handling
@@ -1784,10 +1814,20 @@ public class GamePanel extends JPanel implements KeyListener {
                     if (showingMap) overworldMap.resetIntro();
                 }
                 break;
+            case KeyEvent.VK_A:
+                if (isTraversalPrototypeActive()) {
+                    traversalPrototype.toggleAreaMap();
+                }
+                break;
             case KeyEvent.VK_SPACE:
             case KeyEvent.VK_ENTER:
                 if (showingMap && overworldMap.isSelectedUnlocked()) {
                     launchSelectedLevel();
+                }
+                break;
+            case KeyEvent.VK_T:
+                if (showingMap) {
+                    launchTraversalPrototype();
                 }
                 break;
             case KeyEvent.VK_ESCAPE:
@@ -1923,6 +1963,7 @@ private void restartGame() {
         boss = null;
         satelliteBoss = null;
         moonBackground = null;
+        traversalPrototype = null;
         camera.setEnabled(false);
         camera.reset();
         deployedGrenades.clear();
@@ -1959,12 +2000,48 @@ private void launchSelectedLevel() {
     boss = null;
     satelliteBoss = null;
     moonBackground = (currentLevel == 3) ? new MoonBackground(WIDTH, HEIGHT) : null;
+    traversalPrototype = null;
     // Enable camera scrolling for levels >= 2 (level 1 stays arena-style)
     camera.reset();
     camera.setEnabled(currentLevel >= 2);
     deployedGrenades.clear();
     player = new Player(WIDTH / 2, HEIGHT / 2, 40);
     spawnWave(waveNumber);
+}
+
+private void launchTraversalPrototype() {
+    currentLevel = TRAVERSAL_PROTOTYPE_LEVEL;
+    waveNumber = 1;
+    wave1Active = false;
+    showingMap = false;
+    paused = false;
+    playerDead = false;
+    cinematicPhase = 0;
+    cinematicTimer = 0;
+    projectiles.clear();
+    enemies.clear();
+    enemyShots.clear();
+    rings.clear();
+    shards.clear();
+    smokes.clear();
+    blackHoles.clear();
+    powerUps.clear();
+    missiles.clear();
+    asteroids.clear();
+    nebulae.clear();
+    laserEnemies.clear();
+    spaceStructures.clear();
+    phaseEnemies.clear();
+    activeDecoy = null;
+    boss = null;
+    satelliteBoss = null;
+    moonBackground = null;
+    camera.reset();
+    camera.setEnabled(false);
+    deployedGrenades.clear();
+    player = new Player(WIDTH / 2, HEIGHT / 2, 40);
+    traversalPrototype = new AreaTraversalPrototype(WIDTH, HEIGHT);
+    traversalPrototype.reset(player);
 }
 
 /** DEBUG: skip current wave by killing all enemies. */
@@ -2004,6 +2081,7 @@ private void debugCycleLevel() {
     boss = null;
     satelliteBoss = null;
     moonBackground = (currentLevel == 3) ? new MoonBackground(WIDTH, HEIGHT) : null;
+    traversalPrototype = null;
     camera.reset();
     camera.setEnabled(currentLevel >= 2);
     deployedGrenades.clear();
@@ -2269,8 +2347,51 @@ private String getLevelName(int level) {
         case 4: return "NEON ABYSS";
         case 5: return "SIGNAL PRIME";
         case 6: return "OMEGA CORE";
+        case TRAVERSAL_PROTOTYPE_LEVEL: return "DECOY PROTOTYPE";
         default: return "SECTOR " + level;
     }
+}
+
+private boolean isTraversalPrototypeActive() {
+    return traversalPrototype != null
+        && currentLevel == TRAVERSAL_PROTOTYPE_LEVEL
+        && !showingMap;
+}
+
+private void updateTraversalPrototype() {
+    if (traversalPrototype == null) {
+        return;
+    }
+
+    if (mouseDown || gpFire) {
+        tryFire();
+    }
+    if (controlPressed) {
+        tryFire();
+    }
+
+    for (int i = 0; i < projectiles.size(); i++) {
+        projectiles.get(i).update();
+        if (projectiles.get(i).isOffscreen(WIDTH, HEIGHT)) {
+            projectiles.remove(i--);
+        }
+    }
+
+    for (int i = rings.size() - 1; i >= 0; i--) {
+        rings.get(i).update();
+        if (!rings.get(i).isAlive()) rings.remove(i);
+    }
+    for (int i = shards.size() - 1; i >= 0; i--) {
+        shards.get(i).update();
+        if (!shards.get(i).isAlive()) shards.remove(i);
+    }
+    for (int i = smokes.size() - 1; i >= 0; i--) {
+        smokes.get(i).update();
+        if (!smokes.get(i).isAlive()) smokes.remove(i);
+    }
+
+    double deltaSeconds = Math.max(0.001, frameMs / 1000.0);
+    traversalPrototype.update(player, deltaSeconds);
 }
 
 /** Draw a compact labelled bar for speed/frequency. */
